@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">P2P Chat</string>
+    <string name="bluetooth_chat">Bluetooth Chat</string>
+    <string name="wifi_direct_chat">Wi-Fi Direct Chat</string>
+    <string name="start_server">Start Server</string>
+    <string name="discover_devices">Find Devices</string>
+    <string name="discover_peers">Discover Peers</string>
+    <string name="send">Send</string>
+    <string name="type_message">Type message...</string>
+    <string name="available_devices">Available Devices:</string>
+    <string name="available_peers">Available Peers:</string>
+    <string name="messages">Messages:</string>
+    <string name="bluetooth_not_supported">Bluetooth not supported on this device</string>
+    <string name="bluetooth_permissions_required">Bluetooth permissions required</string>
+    <string name="wifi_permissions_required">Wi-Fi Direct permissions required</string>
+    <string name="choose_communication">Choose communication method:</string>
+    <string name="note_both_devices">Note: Both devices need this app installed</string>
+</resources>

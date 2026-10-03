@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5"
+    android:padding="0dp">
+
+    <!-- Header Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@android:color/white"
+        android:elevation="4dp"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/username_display"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="You: User"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#2E7D32"
+            android:padding="10dp"
+            android:background="#E8F5E9"
+            android:layout_marginBottom="8dp"
+            android:gravity="center"
+            android:drawableStart="@android:drawable/ic_menu_edit"
+            android:drawablePadding="8dp"
+            android:hint="Long press to change username" />
+
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Bluetooth Chat Ready"
+            android:textSize="14sp"
+            android:textColor="#1976D2"
+            android:padding="10dp"
+            android:background="#E3F2FD"
+            android:drawableStart="@android:drawable/presence_online"
+            android:drawablePadding="8dp"
+            android:gravity="center_vertical" />
+    </LinearLayout>
+
+    <!-- Control Buttons Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="@android:color/white"
+        android:layout_marginTop="2dp"
+        android:elevation="2dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <Button
+                android:id="@+id/btn_start_server"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="Start Server"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:backgroundTint="#4CAF50"
+                android:textColor="@android:color/white"
+                android:layout_marginEnd="6dp"
+                android:drawableTop="@android:drawable/ic_menu_upload"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
+
+            <Button
+                android:id="@+id/btn_discover_devices"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="Find Devices"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:backgroundTint="#2196F3"
+                android:textColor="@android:color/white"
+                android:layout_marginStart="6dp"
+                android:drawableTop="@android:drawable/ic_menu_search"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_make_discoverable"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:text="Make Me Discoverable"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:backgroundTint="#FF9800"
+            android:textColor="@android:color/white"
+            android:drawableStart="@android:drawable/ic_menu_view"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp" />
+    </LinearLayout>
+
+    <!-- Devices Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="@android:color/white"
+        android:layout_marginTop="2dp"
+        android:elevation="2dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📱 Available Devices"
+            android:textStyle="bold"
+            android:textSize="15sp"
+            android:textColor="#424242"
+            android:layout_marginBottom="8dp" />
+
+        <ListView
+            android:id="@+id/device_list"
+            android:layout_width="match_parent"
+            android:layout_height="130dp"
+            android:background="#FAFAFA"
+            android:divider="#E0E0E0"
+            android:dividerHeight="1dp"
+            android:padding="4dp" />
+    </LinearLayout>
+
+    <!-- Messages Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="@android:color/white"
+        android:layout_marginTop="2dp"
+        android:elevation="2dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="💬 Messages"
+            android:textStyle="bold"
+            android:textSize="15sp"
+            android:textColor="#424242"
+            android:layout_marginBottom="8dp" />
+
+        <ListView
+            android:id="@+id/message_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="#FFFFFF"
+            android:divider="#E0E0E0"
+            android:dividerHeight="1dp"
+            android:padding="8dp"
+            android:transcriptMode="alwaysScroll"
+            android:stackFromBottom="true" />
+    </LinearLayout>
+
+    <!-- Message Input Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:background="@android:color/white"
+        android:elevation="8dp">
+
+        <EditText
+            android:id="@+id/message_input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Type your message..."
+            android:padding="12dp"
+            android:background="#F5F5F5"
+            android:textSize="15sp"
+            android:layout_marginEnd="8dp"
+            android:minHeight="48dp"
+            android:maxLines="3"
+            android:inputType="textCapSentences|textMultiLine" />
+
+        <Button
+            android:id="@+id/btn_send_message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Send"
+            android:textStyle="bold"
+            android:backgroundTint="#4CAF50"
+            android:textColor="@android:color/white"
+            android:minWidth="80dp"
+            android:minHeight="48dp" />
+    </LinearLayout>
+
+</LinearLayout>
