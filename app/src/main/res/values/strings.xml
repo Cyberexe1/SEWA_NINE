@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">P2P Chat</string>
+    <string name="app_name">NINE</string>
     <string name="bluetooth_chat">Bluetooth Chat</string>
     <string name="wifi_direct_chat">Wi-Fi Direct Chat</string>
     <string name="start_server">Start Server</string>

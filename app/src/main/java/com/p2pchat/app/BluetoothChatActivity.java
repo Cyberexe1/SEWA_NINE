@@ -50,7 +50,7 @@ public class BluetoothChatActivity extends AppCompatActivity {
     private ListView deviceList, messageList;
     private EditText messageInput;
     private Button btnStartServer, btnDiscoverDevices, btnSendMessage, btnMakeDiscoverable;
-    private TextView statusText, usernameDisplay;
+    private TextView statusText, usernameDisplay, connectionIndicator;
     
     private BluetoothServerSocket serverSocket;
     private BluetoothSocket clientSocket;
@@ -91,6 +91,8 @@ public class BluetoothChatActivity extends AppCompatActivity {
         btnMakeDiscoverable = findViewById(R.id.btn_make_discoverable);
         statusText = findViewById(R.id.status_text);
         usernameDisplay = findViewById(R.id.username_display);
+        connectionIndicator = findViewById(R.id.connection_indicator);
+        updateConnectionIndicator(false);
         
         discoveredDevices = new ArrayList<>();
         deviceListAdapter = new ArrayAdapter<>(this, R.layout.list_item_device);
@@ -116,6 +118,13 @@ public class BluetoothChatActivity extends AppCompatActivity {
     private void updateUsernameDisplay() {
         if (usernameDisplay != null) {
             usernameDisplay.setText("You: " + username);
+        }
+    }
+    
+    // Green dot when connected to a peer, red dot otherwise
+    private void updateConnectionIndicator(boolean connected) {
+        if (connectionIndicator != null) {
+            connectionIndicator.setTextColor(connected ? 0xFF4CAF50 : 0xFFF44336);
         }
     }
     
@@ -505,6 +514,7 @@ public class BluetoothChatActivity extends AppCompatActivity {
     
     private void startConnectedThread(BluetoothSocket socket) {
         isConnected = true;
+        mainHandler.post(() -> updateConnectionIndicator(true));
         connectedThread = new ConnectedThread(socket);
         connectedThread.start();
     }
@@ -618,6 +628,7 @@ public class BluetoothChatActivity extends AppCompatActivity {
                     mainHandler.post(() -> {
                         statusText.setText("Connection lost");
                         isConnected = false;
+                        updateConnectionIndicator(false);
                         btnStartServer.setEnabled(true);
                         Toast.makeText(BluetoothChatActivity.this, peerUsername + " disconnected", Toast.LENGTH_SHORT).show();
                         
