@@ -1,6 +1,0 @@
-com.p2pchat.app.test.app-core-1.5.0-0 C:\Users\ADMIN\.gradle\caches\transforms-3\334349fe1ee3a7cc505a1b1a6ed12f70\transformed\core-1.5.0\res
-com.p2pchat.app.test.app-annotation-experimental-1.3.0-1 C:\Users\ADMIN\.gradle\caches\transforms-3\5aa2966d78ad4ee758c1ecea8b1a578e\transformed\annotation-experimental-1.3.0\res
-com.p2pchat.app.test.app-androidTest-2 G:\Android_App_networkless\with_Discoverable\app\build\generated\res\resValues\androidTest\debug
-com.p2pchat.app.test.app-mergeDebugAndroidTestResources-3 G:\Android_App_networkless\with_Discoverable\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
-com.p2pchat.app.test.app-mergeDebugAndroidTestResources-4 G:\Android_App_networkless\with_Discoverable\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
-com.p2pchat.app.test.app-merged_res-5 G:\Android_App_networkless\with_Discoverable\app\build\intermediates\merged_res\debugAndroidTest
