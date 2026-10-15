@@ -18,6 +18,7 @@ import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -49,7 +50,7 @@ public class BluetoothChatActivity extends AppCompatActivity {
     
     private ListView deviceList, messageList;
     private EditText messageInput;
-    private Button btnStartServer, btnDiscoverDevices, btnSendMessage, btnMakeDiscoverable;
+    private Button btnConnect, btnSendMessage;
     private TextView statusText, usernameDisplay, connectionIndicator;
     
     private BluetoothServerSocket serverSocket;
@@ -85,10 +86,8 @@ public class BluetoothChatActivity extends AppCompatActivity {
         deviceList = findViewById(R.id.device_list);
         messageList = findViewById(R.id.message_list);
         messageInput = findViewById(R.id.message_input);
-        btnStartServer = findViewById(R.id.btn_start_server);
-        btnDiscoverDevices = findViewById(R.id.btn_discover_devices);
+        btnConnect = findViewById(R.id.btn_connect);
         btnSendMessage = findViewById(R.id.btn_send_message);
-        btnMakeDiscoverable = findViewById(R.id.btn_make_discoverable);
         statusText = findViewById(R.id.status_text);
         usernameDisplay = findViewById(R.id.username_display);
         connectionIndicator = findViewById(R.id.connection_indicator);
@@ -216,10 +215,14 @@ public class BluetoothChatActivity extends AppCompatActivity {
     }
     
     private void setupClickListeners() {
-        btnStartServer.setOnClickListener(v -> startServer());
-        btnDiscoverDevices.setOnClickListener(v -> discoverDevices());
+        btnConnect.setOnClickListener(v -> connect());
         btnSendMessage.setOnClickListener(v -> sendMessage());
-        btnMakeDiscoverable.setOnClickListener(v -> makeDiscoverable());
+        
+        // Edit button to change the username
+        ImageButton btnEditUsername = findViewById(R.id.btn_edit_username);
+        if (btnEditUsername != null) {
+            btnEditUsername.setOnClickListener(v -> showUsernameDialog());
+        }
         
         // Long press on username to change it
         if (usernameDisplay != null) {
@@ -330,8 +333,37 @@ public class BluetoothChatActivity extends AppCompatActivity {
         
         isServer = true;
         statusText.setText("Server started. Waiting for connections...");
-        btnStartServer.setEnabled(false);
-        Toast.makeText(this, "Server ready! Other devices can now find and connect to you.", Toast.LENGTH_LONG).show();
+        btnConnect.setEnabled(false);
+        btnConnect.setText("Searching...");
+    }
+    
+    // Single-tap flow: listen for connections, become discoverable, and scan for peers.
+    private void connect() {
+        if (bluetoothAdapter == null) {
+            Toast.makeText(this, "Bluetooth not supported on this device", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!hasBluetoothPermissions()) {
+            requestBluetoothPermissions();
+            return;
+        }
+        try {
+            if (!bluetoothAdapter.isEnabled()) {
+                Toast.makeText(this, "Please enable Bluetooth", Toast.LENGTH_SHORT).show();
+                startActivityForResult(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), REQUEST_ENABLE_BT);
+                return;
+            }
+        } catch (SecurityException e) {
+            requestBluetoothPermissions();
+            return;
+        }
+        if (isConnected) {
+            Toast.makeText(this, "Already connected to a device", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // Start listening and request discoverability. Scanning auto-starts once
+        // the discoverable prompt returns (see onActivityResult).
+        startServer();
     }
     
     private void discoverDevices() {
@@ -629,7 +661,8 @@ public class BluetoothChatActivity extends AppCompatActivity {
                         statusText.setText("Connection lost");
                         isConnected = false;
                         updateConnectionIndicator(false);
-                        btnStartServer.setEnabled(true);
+                        btnConnect.setEnabled(true);
+                        btnConnect.setText("Connect");
                         Toast.makeText(BluetoothChatActivity.this, peerUsername + " disconnected", Toast.LENGTH_SHORT).show();
                         
                         // Restart server if we were in server mode
@@ -671,7 +704,8 @@ public class BluetoothChatActivity extends AppCompatActivity {
                 Log.e(TAG, "Server socket creation failed", e);
                 mainHandler.post(() -> {
                     statusText.setText("Server failed to start");
-                    btnStartServer.setEnabled(true);
+                    btnConnect.setEnabled(true);
+                    btnConnect.setText("Connect");
                     Toast.makeText(BluetoothChatActivity.this, "Failed to start server. Check permissions.", Toast.LENGTH_LONG).show();
                 });
             }
@@ -780,7 +814,12 @@ public class BluetoothChatActivity extends AppCompatActivity {
             }
         } else if (requestCode == REQUEST_DISCOVERABLE) {
             if (resultCode > 0) {
-                Toast.makeText(this, "Device is now discoverable for " + resultCode + " seconds", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Discoverable for " + resultCode + "s. Searching for peers...", Toast.LENGTH_SHORT).show();
+            }
+            // Whether or not the user allowed discoverability, start scanning so we can
+            // find the other device. This completes the single-tap Connect flow.
+            if (!isConnected) {
+                discoverDevices();
             }
         }
     }
