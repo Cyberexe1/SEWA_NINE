@@ -7,7 +7,7 @@
 import type { NodeID, NodeRole, Timestamp } from '../shared/Types.js';
 import type { NeighborEntry } from '../node/NeighborTable.js';
 import type { RoutingEntry } from '../node/RoutingTable.js';
-import type { KnownNodeEntry } from '../routing/MeshManager.js';
+import type { KnownNodeEntry } from '../node/NodeRegistry.js';
 
 /**
  * Persisted node state (survives restarts).
