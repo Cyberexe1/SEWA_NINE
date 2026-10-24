@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NINE Mesh Topology Examples - Open with draw.io / diagrams.net -->
+<!-- TODO: Create topology diagrams (linear, star, multi-floor) for demo scenarios -->
+<mxfile>
+  <diagram name="NINE Mesh Topologies">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

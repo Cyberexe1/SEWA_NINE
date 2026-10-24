@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NINE Architecture Diagram - Open with draw.io / diagrams.net -->
+<!-- TODO: Create layered architecture visualization -->
+<mxfile>
+  <diagram name="NINE Architecture">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
