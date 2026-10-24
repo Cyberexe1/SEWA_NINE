@@ -8,8 +8,8 @@
 import type { Packet } from '../protocol/Packet.js';
 import type { NodeID } from '../shared/Types.js';
 import type { IRoutingAlgorithm } from './AODV.js';
-import type { INeighborTable, NeighborEntry } from '../node/NeighborTable.js';
-import type { IRoutingTable } from '../node/RoutingTable.js';
+import type { NeighborEntry, NeighborTable } from '../node/NeighborTable.js';
+import type { RoutingTable } from '../node/RoutingTable.js';
 
 /**
  * Topology view for the Admin dashboard visualization.
@@ -37,8 +37,8 @@ export interface TopologyView {
  */
 export interface RoutingContext {
   selfId: NodeID;
-  neighborTable: INeighborTable;
-  routingTable: IRoutingTable;
+  neighborTable: NeighborTable;
+  routingTable: RoutingTable;
   sendPacket: (packet: Packet, nextHop: NodeID) => Promise<void>;
   broadcastPacket: (packet: Packet, excludeNode?: NodeID) => Promise<void>;
 }
