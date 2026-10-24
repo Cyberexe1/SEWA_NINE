@@ -36,11 +36,17 @@ NINE creates a local, off-grid chat network between Android phones. It is useful
 
 These are implemented today:
 
-- **One-tap Connect**: A single **Connect** button starts listening, becomes discoverable, and scans for peers all at once. No need to separately start a server, find devices, and make yourself discoverable.
-- **Direct Bluetooth chat**: Two nearby devices connect and exchange text messages in real time.
-- **Editable username**: Set and change your display name with an edit button in the name bar. The name is shared with the person you chat with.
-- **Connection status dot**: A colored dot next to your name — green when connected to a peer, red when not.
-- **Offline**: No internet, account, or server required.
+- **One-tap Connect**: A single **Connect** button starts listening, becomes discoverable, and scans for peers all at once.
+- **Multi-hop relay mesh**: Messages hop across intermediate phones (controlled flooding with TTL + duplicate detection) to reach people who are out of direct Bluetooth range.
+- **Unique device identity**: Every install gets a permanent UUID (shown as a short `#XXXX` tag), so people with the same display name are never confused.
+- **People Online (mesh contacts)**: Presence announcements propagate through the mesh, so you can see and message people you're not directly connected to.
+- **Targeted, end-to-end encrypted messaging**: Pick a person and the message is encrypted (RSA + AES-GCM) so relays forward ciphertext they cannot read. A 🔒 marks encrypted messages.
+- **Delivery confirmation**: Addressed messages show "(sending…)", then "✓✓ delivered" or "✗ not delivered", with automatic retries.
+- **Relay Mode**: One button turns a phone into a hands-off forwarder (auto-connect, auto-accept, foreground service, live status).
+- **Offline map**: A Map tab (OpenStreetMap via osmdroid) shows your GPS position, lets you download your area for offline use, and plots mesh peers as pins from location shared over the mesh.
+- **Four-tab UI**: Chat / Relay / Map / Settings with a top-bar connection dot.
+- **Editable username** and **connection status dot**.
+- **Offline**: No internet, account, or server required (internet is used only to download map tiles for offline use).
 
 ---
 
@@ -201,17 +207,29 @@ Neither Alice nor Eve ever sees the other in their raw Bluetooth scan — only t
 
 ---
 
+## Offline Map & Location Sharing
+
+The **Map** tab uses OpenStreetMap (via the osmdroid library):
+
+- **My Location** centers the map on your GPS position. GPS works fully offline — it needs no internet or cell signal.
+- **Download this area** caches the tiles currently in view (across a few zoom levels) so that area works with no connection afterward. The map data download itself needs internet once; after that it is used offline.
+- **Peer pins**: each device shares its GPS position through the mesh as a `LOCATION` packet (same flooding + TTL as everything else). Other devices plot those peers as pins, so you can see where people are — even ones several relay hops away — without any internet.
+
+Note on tiles: the built-in "Download this area" uses OpenStreetMap's public tile server, whose policy discourages bulk downloading. For a production release, point it at a proper tile provider (MapTiler, Mapbox) or self-hosted tiles.
+
 ## Permissions
 
 **Android 12+**
-- Bluetooth Connect
-- Bluetooth Scan
-- Bluetooth Advertise
+- Bluetooth Connect, Scan, Advertise
+- Location (for showing your position on the map)
 
 **Android 10–11**
-- Location (required by Android for Bluetooth discovery)
+- Location (required by Android for Bluetooth discovery, and for the map)
 
-Location is used only to satisfy Android's Bluetooth-scanning requirement; NINE does not track or transmit your location.
+**All versions**
+- Internet + Network State — used only to download map tiles for offline use
+- Foreground Service (Connected Device) — keeps Relay Mode alive in the background
+- Post Notifications — for the Relay Mode notification (Android 13+)
 
 ---
 
@@ -252,9 +270,14 @@ Location is used only to satisfy Android's Bluetooth-scanning requirement; NINE 
 app/src/main/
 ├── java/com/p2pchat/app/
 │   ├── MainActivity.java              # Launch screen / entry point
-│   └── BluetoothChatActivity.java     # Bluetooth chat + connection logic
+│   ├── BluetoothChatActivity.java     # Tabs, mesh logic, chat, map
+│   ├── Packet.java                    # Wire protocol (HELLO/PRESENCE/MSG/ACK/LOCATION)
+│   ├── Crypto.java                    # End-to-end encryption (RSA + AES-GCM)
+│   └── RelayService.java              # Foreground service for Relay Mode
 ├── res/
-│   ├── layout/                        # UI layouts (chat, dialogs, list items)
+│   ├── layout/                        # UI layouts (tabs, dialogs, list items)
+│   ├── menu/                          # Bottom navigation menu
+│   ├── drawable/                      # Rounded input backgrounds
 │   ├── values/                        # strings, colors, themes
 │   └── mipmap-*/                      # App icons
 └── AndroidManifest.xml                # App configuration and permissions
@@ -264,14 +287,26 @@ app/src/main/
 
 ## Roadmap
 
-- [ ] Stable per-device app IDs (UUID) alongside display names
-- [ ] Presence announcements that propagate through the mesh
-- [ ] "People online" contact list separate from nearby Bluetooth devices
-- [ ] Relay Mode button with automatic accept/connect/forward
-- [ ] Message envelope with `messageId`, `sourceId`, `destId`, `ttl`
-- [ ] Duplicate detection and TTL-based loop prevention
-- [ ] End-to-end encryption
-- [ ] Foreground service to keep relays alive in the background
+Done:
+- [x] Stable per-device app IDs (UUID) alongside display names
+- [x] Message envelope with `messageId`, `sourceId`, `destId`, `ttl`
+- [x] Duplicate detection and TTL-based loop prevention
+- [x] Multi-neighbor connection manager (many links at once)
+- [x] Controlled-flooding forwarding (multi-hop delivery)
+- [x] Presence announcements that propagate through the mesh
+- [x] "People online" contact list separate from nearby Bluetooth devices
+- [x] Targeted messaging by device ID
+- [x] End-to-end encryption (RSA + AES-GCM)
+- [x] Delivery ACKs with retries and inline status
+- [x] Relay Mode button with automatic accept/connect/forward + foreground service
+- [x] Offline map (osmdroid) with area download, GPS position, and mesh peer pins
+
+In progress / planned:
+- [ ] Move the mesh networking into `RelayService` for true background relaying (currently the app must stay running)
+- [ ] Encrypt/authenticate location shares (currently sent as mesh metadata)
+- [ ] Metadata privacy (hide who is talking to whom)
+- [ ] Device-type filter for Relay Mode auto-connect
+- [ ] Production tile provider for offline map downloads
 
 ---
 

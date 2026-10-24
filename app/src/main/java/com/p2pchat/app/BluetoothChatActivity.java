@@ -26,9 +26,21 @@ import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.android.material.bottomnavigation.BottomNavigationView;
+
+import org.osmdroid.config.Configuration;
+import org.osmdroid.tileprovider.cachemanager.CacheManager;
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
+import org.osmdroid.util.BoundingBox;
+import org.osmdroid.util.GeoPoint;
+import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Marker;
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider;
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.UUID;
 
@@ -38,43 +50,161 @@ public class BluetoothChatActivity extends AppCompatActivity {
     private static final String APP_NAME = "P2PChat";
     private static final String PREFS_NAME = "P2PChatPrefs";
     private static final String KEY_USERNAME = "username";
-    private static final String MESSAGE_SEPARATOR = "::MSG::";
+    private static final String KEY_DEVICE_ID = "device_id";
     private static final int REQUEST_ENABLE_BT = 1;
     private static final int REQUEST_BLUETOOTH_PERMISSIONS = 2;
     private static final int REQUEST_DISCOVERABLE = 3;
+    private static final int DEFAULT_TTL = 5;  // max relay hops a message may travel
+    private static final long PRESENCE_INTERVAL_MS = 20000; // how often we announce ourselves
+    private static final long CONTACT_TIMEOUT_MS = 60000;   // mark a contact offline after this
+    
+    // A person reachable somewhere in the mesh (learned via presence propagation).
+    private static class Contact {
+        String deviceId;
+        String name;
+        String pubKey;
+        int seq;
+        long lastSeen;
+        double lat;
+        double lon;
+        boolean hasLocation;
+    }
+    
+    // An addressed message we sent that is waiting for a delivery ACK (so we can retry).
+    private static class Pending {
+        Packet packet;
+        int attempts;
+        long lastSent;
+        String preview;
+        int uiIndex = -1;    // row in the message list to update with delivery status
+        String baseText;     // the message text without any status suffix
+    }
     
     private BluetoothAdapter bluetoothAdapter;
     private ArrayAdapter<String> deviceListAdapter;
     private ArrayAdapter<String> messageAdapter;
     private ArrayList<BluetoothDevice> discoveredDevices;
     
-    private ListView deviceList, messageList;
+    private ListView messageList, contactsList;
     private EditText messageInput;
     private Button btnConnect, btnSendMessage;
-    private TextView statusText, usernameDisplay, connectionIndicator;
+    private TextView statusText, usernameDisplay, connectionIndicator, messageHeader;
+    private ArrayAdapter<String> contactsAdapter;
+    private final java.util.ArrayList<String> messageItems = new java.util.ArrayList<>();
     
-    private BluetoothServerSocket serverSocket;
-    private BluetoothSocket clientSocket;
-    private ConnectedThread connectedThread;
+    // Mesh-wide contacts learned via presence, and the currently selected chat target.
+    private final java.util.LinkedHashMap<String, Contact> contacts = new java.util.LinkedHashMap<>();
+    private final java.util.ArrayList<String> contactIdOrder = new java.util.ArrayList<>();
+    private String currentTargetId = "";     // empty = broadcast to everyone
+    private String currentTargetName = "";
+    private int presenceSeq = 0;
+    private Crypto crypto;
+    
+    // Addressed messages awaiting delivery confirmation, keyed by their msgId.
+    private final java.util.concurrent.ConcurrentHashMap<String, Pending> pending =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int MAX_ATTEMPTS = 4;
+    private static final long RETRY_INTERVAL_MS = 5000;
+    
+    // Resend unacknowledged addressed messages until they're delivered or attempts run out.
+    private final Runnable retryTask = new Runnable() {
+        @Override
+        public void run() {
+            long now = System.currentTimeMillis();
+            for (Pending p : pending.values()) {
+                if (now - p.lastSent >= RETRY_INTERVAL_MS) {
+                    if (p.attempts >= MAX_ATTEMPTS) {
+                        pending.remove(p.packet.msgId);
+                        if (p.uiIndex >= 0 && p.uiIndex < messageItems.size()) {
+                            messageItems.set(p.uiIndex, p.baseText + "  \u2717 not delivered");
+                            messageAdapter.notifyDataSetChanged();
+                        }
+                    } else {
+                        p.attempts++;
+                        p.lastSent = now;
+                        neighborManager.broadcast(p.packet, null);
+                    }
+                }
+            }
+            mainHandler.postDelayed(this, RETRY_INTERVAL_MS);
+        }
+    };
+    
+    private Button btnRelayMode;
+    private BottomNavigationView bottomNav;
+    private View sectionChat, sectionRelay, sectionMap, sectionSettings;
+    private TextView tvSelfId, settingsDeviceId, relayStatus, mapStatus;
+    private MapView map;
+    private MyLocationNewOverlay myLocationOverlay;
+    private final java.util.HashMap<String, Marker> peerMarkers = new java.util.HashMap<>();
+    private static final int REQUEST_LOCATION = 5;
+    private boolean relayMode = false;
+    private boolean autoConnect = false;
+    private int forwardedCount = 0;   // number of messages this device has relayed
+    private static final int REQUEST_POST_NOTIFICATIONS = 4;
+    private static final long RESCAN_INTERVAL_MS = 40000;   // re-scan to find/re-link neighbors
+    // Bluetooth addresses we've already tried this scan cycle, to avoid hammering the same device.
+    private final java.util.Set<String> attemptedAddresses =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    
+    // Periodically re-run discovery so a relay keeps finding and reconnecting to neighbors.
+    private final Runnable rescanTask = new Runnable() {
+        @Override
+        public void run() {
+            if (autoConnect) {
+                attemptedAddresses.clear();   // allow retrying devices that dropped
+                discoverDevices();
+                mainHandler.postDelayed(this, RESCAN_INTERVAL_MS);
+            }
+        }
+    };
+    
+    // Periodically announce our presence and expire stale contacts.
+    private final Runnable presenceTask = new Runnable() {
+        @Override
+        public void run() {
+            if (neighborManager != null && neighborManager.count() > 0) {
+                emitPresence();
+                emitLocation();
+            }
+            pruneContacts();
+            mainHandler.postDelayed(this, PRESENCE_INTERVAL_MS);
+        }
+    };
+    
     private AcceptThread acceptThread;
     private Handler mainHandler;
+    private NeighborManager neighborManager;
     
     private boolean isServer = false;
     private boolean isConnected = false;
     private String username = "User";
     private String peerUsername = "Peer";
+    private String deviceId = "";       // stable unique ID for this install (routing/identity)
+    private String peerDeviceId = "";   // the connected peer's device ID
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        
+        // osmdroid must be configured before the MapView is inflated.
+        Configuration.getInstance().load(getApplicationContext(),
+                getSharedPreferences("osmdroid", MODE_PRIVATE));
+        Configuration.getInstance().setUserAgentValue(getPackageName());
+        
         setContentView(R.layout.activity_bluetooth_chat);
+        
+        mainHandler = new Handler(Looper.getMainLooper());
+        neighborManager = new NeighborManager();
         
         initViews();
         loadUsername();
         initBluetooth();
         setupClickListeners();
         
-        mainHandler = new Handler(Looper.getMainLooper());
+        // Start periodic presence announcements + contact expiry, and message retries.
+        mainHandler.postDelayed(presenceTask, PRESENCE_INTERVAL_MS);
+        mainHandler.postDelayed(retryTask, RETRY_INTERVAL_MS);
         
         // Show username dialog if not set
         if (username.equals("User")) {
@@ -83,28 +213,65 @@ public class BluetoothChatActivity extends AppCompatActivity {
     }
     
     private void initViews() {
-        deviceList = findViewById(R.id.device_list);
         messageList = findViewById(R.id.message_list);
+        contactsList = findViewById(R.id.contacts_list);
         messageInput = findViewById(R.id.message_input);
         btnConnect = findViewById(R.id.btn_connect);
+        btnRelayMode = findViewById(R.id.btn_relay_mode);
         btnSendMessage = findViewById(R.id.btn_send_message);
         statusText = findViewById(R.id.status_text);
         usernameDisplay = findViewById(R.id.username_display);
         connectionIndicator = findViewById(R.id.connection_indicator);
+        messageHeader = findViewById(R.id.message_header);
+        tvSelfId = findViewById(R.id.tv_self_id);
+        settingsDeviceId = findViewById(R.id.settings_device_id);
+        relayStatus = findViewById(R.id.relay_status);
+        mapStatus = findViewById(R.id.map_status);
+        map = findViewById(R.id.map);
+        bottomNav = findViewById(R.id.bottom_nav);
+        sectionChat = findViewById(R.id.section_chat);
+        sectionRelay = findViewById(R.id.section_relay);
+        sectionMap = findViewById(R.id.section_map);
+        sectionSettings = findViewById(R.id.section_settings);
+        setupMap();
+        setupBottomNav();
         updateConnectionIndicator(false);
         
         discoveredDevices = new ArrayList<>();
         deviceListAdapter = new ArrayAdapter<>(this, R.layout.list_item_device);
-        messageAdapter = new ArrayAdapter<>(this, R.layout.list_item_message);
+        messageAdapter = new ArrayAdapter<>(this, R.layout.list_item_message, messageItems);
+        contactsAdapter = new ArrayAdapter<>(this, R.layout.list_item_device);
         
-        deviceList.setAdapter(deviceListAdapter);
         messageList.setAdapter(messageAdapter);
+        contactsList.setAdapter(contactsAdapter);
     }
     
     private void loadUsername() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         username = prefs.getString(KEY_USERNAME, "User");
+        
+        // Generate a stable, unique device ID on first launch and reuse it forever.
+        // This is what identifies a device for routing, so two users with the same
+        // display name are never confused.
+        deviceId = prefs.getString(KEY_DEVICE_ID, null);
+        if (deviceId == null || deviceId.isEmpty()) {
+            deviceId = UUID.randomUUID().toString();
+            prefs.edit().putString(KEY_DEVICE_ID, deviceId).apply();
+        }
+        
+        // Load (or generate) this device's encryption key pair.
+        crypto = new Crypto(prefs);
+        
         updateUsernameDisplay();
+    }
+    
+    // Short, human-readable tag from the device ID (last 4 chars) used to tell apart
+    // people who picked the same display name.
+    private String shortId(String id) {
+        if (id == null || id.length() < 4) {
+            return "----";
+        }
+        return id.substring(id.length() - 4).toUpperCase();
     }
     
     private void saveUsername(String name) {
@@ -112,12 +279,133 @@ public class BluetoothChatActivity extends AppCompatActivity {
         prefs.edit().putString(KEY_USERNAME, name).apply();
         username = name;
         updateUsernameDisplay();
+        // Let the mesh know our new name.
+        if (neighborManager != null && neighborManager.count() > 0) {
+            emitPresence();
+        }
     }
     
     private void updateUsernameDisplay() {
         if (usernameDisplay != null) {
-            usernameDisplay.setText("You: " + username);
+            usernameDisplay.setText("You: " + username + "  #" + shortId(deviceId));
         }
+        if (tvSelfId != null) {
+            tvSelfId.setText("#" + shortId(deviceId));
+        }
+        if (settingsDeviceId != null) {
+            settingsDeviceId.setText("Device ID: " + deviceId);
+        }
+    }
+    
+    private void setupBottomNav() {
+        if (bottomNav == null) {
+            return;
+        }
+        bottomNav.setOnItemSelectedListener(item -> {
+            int id = item.getItemId();
+            if (id == R.id.nav_chat) {
+                showSection(0);
+                return true;
+            } else if (id == R.id.nav_relay) {
+                showSection(1);
+                return true;
+            } else if (id == R.id.nav_map) {
+                showSection(2);
+                return true;
+            } else if (id == R.id.nav_settings) {
+                showSection(3);
+                return true;
+            }
+            return false;
+        });
+        showSection(0);
+    }
+    
+    private void showSection(int index) {
+        if (sectionChat != null) {
+            sectionChat.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
+        }
+        if (sectionRelay != null) {
+            sectionRelay.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
+        }
+        if (sectionMap != null) {
+            sectionMap.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
+        }
+        if (sectionSettings != null) {
+            sectionSettings.setVisibility(index == 3 ? View.VISIBLE : View.GONE);
+        }
+    }
+    
+    private void setupMap() {
+        if (map == null) {
+            return;
+        }
+        map.setTileSource(TileSourceFactory.MAPNIK);
+        map.setMultiTouchControls(true);
+        map.getController().setZoom(6.0);
+        map.getController().setCenter(new GeoPoint(20.5937, 78.9629));   // default: India center
+        
+        myLocationOverlay = new MyLocationNewOverlay(new GpsMyLocationProvider(this), map);
+        if (hasLocationPermission()) {
+            myLocationOverlay.enableMyLocation();
+        }
+        map.getOverlays().add(myLocationOverlay);
+    }
+    
+    private boolean hasLocationPermission() {
+        return checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+    
+    private void goToMyLocation() {
+        if (!hasLocationPermission()) {
+            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_LOCATION);
+            return;
+        }
+        if (myLocationOverlay == null || map == null) {
+            return;
+        }
+        myLocationOverlay.enableMyLocation();
+        GeoPoint loc = myLocationOverlay.getMyLocation();
+        if (loc != null) {
+            map.getController().setZoom(17.0);
+            map.getController().animateTo(loc);
+        } else {
+            Toast.makeText(this, "Getting your location…", Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    // Cache the tiles currently in view (across a few zoom levels) for offline use.
+    private void downloadCurrentArea() {
+        if (map == null) {
+            return;
+        }
+        CacheManager cacheManager = new CacheManager(map);
+        BoundingBox bb = map.getBoundingBox();
+        final int zoomMin = (int) map.getZoomLevelDouble();
+        final int zoomMax = Math.min(zoomMin + 3, 18);
+        cacheManager.downloadAreaAsync(this, bb, zoomMin, zoomMax, new CacheManager.CacheManagerCallback() {
+            @Override
+            public void onTaskComplete() {
+                if (mapStatus != null) mapStatus.setText("Area downloaded — available offline.");
+            }
+            @Override
+            public void onTaskFailed(int errors) {
+                if (mapStatus != null) mapStatus.setText("Download finished with " + errors + " errors.");
+            }
+            @Override
+            public void updateProgress(int progress, int currentZoomLevel, int zoomMin2, int zoomMax2) {
+                if (mapStatus != null) mapStatus.setText("Downloading… " + progress + "%");
+            }
+            @Override
+            public void downloadStarted() {
+                if (mapStatus != null) mapStatus.setText("Starting download…");
+            }
+            @Override
+            public void setPossibleTilesInArea(int total) {
+                if (mapStatus != null) mapStatus.setText("Downloading " + total + " tiles…");
+            }
+        });
     }
     
     // Green dot when connected to a peer, red dot otherwise
@@ -217,6 +505,23 @@ public class BluetoothChatActivity extends AppCompatActivity {
     private void setupClickListeners() {
         btnConnect.setOnClickListener(v -> connect());
         btnSendMessage.setOnClickListener(v -> sendMessage());
+        if (btnRelayMode != null) {
+            btnRelayMode.setOnClickListener(v -> toggleRelayMode());
+        }
+        
+        Button btnPermissions = findViewById(R.id.btn_permissions);
+        if (btnPermissions != null) {
+            btnPermissions.setOnClickListener(v -> checkAndShowPermissionStatus());
+        }
+        
+        Button btnMyLocation = findViewById(R.id.btn_my_location);
+        if (btnMyLocation != null) {
+            btnMyLocation.setOnClickListener(v -> goToMyLocation());
+        }
+        Button btnDownloadArea = findViewById(R.id.btn_download_area);
+        if (btnDownloadArea != null) {
+            btnDownloadArea.setOnClickListener(v -> downloadCurrentArea());
+        }
         
         // Edit button to change the username
         ImageButton btnEditUsername = findViewById(R.id.btn_edit_username);
@@ -240,12 +545,243 @@ public class BluetoothChatActivity extends AppCompatActivity {
             });
         }
         
-        deviceList.setOnItemClickListener((parent, view, position, id) -> {
-            if (position < discoveredDevices.size()) {
-                BluetoothDevice device = discoveredDevices.get(position);
-                connectToDevice(device);
+        Button btnLinkDevice = findViewById(R.id.btn_link_device);
+        if (btnLinkDevice != null) {
+            btnLinkDevice.setOnClickListener(v -> showNearbyDevicesDialog());
+        }
+        
+        // Tap a person in the mesh to direct your messages to them (routed via relays).
+        contactsList.setOnItemClickListener((parent, view, position, id) -> {
+            if (position < contactIdOrder.size()) {
+                currentTargetId = contactIdOrder.get(position);
+                Contact c = contacts.get(currentTargetId);
+                currentTargetName = (c != null) ? c.name : "";
+                updateMessageHeader();
+                rebuildContactsUi();
             }
         });
+        
+        // Long-press the messages header to clear the target and broadcast to everyone.
+        if (messageHeader != null) {
+            messageHeader.setOnLongClickListener(v -> {
+                currentTargetId = "";
+                currentTargetName = "";
+                updateMessageHeader();
+                rebuildContactsUi();
+                Toast.makeText(this, "Now messaging everyone", Toast.LENGTH_SHORT).show();
+                return true;
+            });
+        }
+    }
+    
+    private void updateMessageHeader() {
+        if (messageHeader == null) {
+            return;
+        }
+        if (currentTargetId == null || currentTargetId.isEmpty()) {
+            messageHeader.setText("💬 Messages (everyone)");
+        } else {
+            messageHeader.setText("💬 To: " + currentTargetName + " #" + shortId(currentTargetId));
+        }
+    }
+    
+    // Decrypt (if needed) and show an incoming message.
+    private void deliverMessage(Packet pkt) {
+        final String senderLabel = (pkt.name != null && !pkt.name.isEmpty()) ? pkt.name : "Peer";
+        String body = pkt.payload;
+        String lock = "";
+        if (Crypto.isEncrypted(body)) {
+            String decrypted = crypto.decrypt(body);
+            if (decrypted != null) {
+                body = decrypted;
+                lock = " \uD83D\uDD12";
+            } else {
+                body = "[encrypted message – can't decrypt]";
+            }
+        }
+        final String text = body;
+        final String lockIcon = lock;
+        mainHandler.post(() -> messageAdapter.add(senderLabel + lockIcon + ": " + text));
+    }
+    
+    // Send a delivery acknowledgement back toward the original sender.
+    private void sendAck(Packet original) {
+        Packet ack = new Packet(Packet.TYPE_ACK);
+        ack.srcId = deviceId;
+        ack.dstId = original.srcId;
+        ack.payload = original.msgId;   // which message we're acknowledging
+        ack.ttl = DEFAULT_TTL;
+        ack.msgId = Packet.newMsgId();
+        neighborManager.markSeen(ack.msgId);
+        neighborManager.broadcast(ack, null);
+    }
+    
+    // An ACK arrived for one of our sent messages: mark it delivered and stop retrying.
+    private void markDelivered(String ackedMsgId) {
+        if (ackedMsgId == null || ackedMsgId.isEmpty()) {
+            return;
+        }
+        Pending p = pending.remove(ackedMsgId);
+        if (p != null) {
+            mainHandler.post(() -> {
+                if (p.uiIndex >= 0 && p.uiIndex < messageItems.size()) {
+                    messageItems.set(p.uiIndex, p.baseText + "  \u2713\u2713 delivered");
+                    messageAdapter.notifyDataSetChanged();
+                }
+            });
+        }
+    }
+    
+    // Share our GPS position into the mesh so peers can plot us on their map.
+    private void emitLocation() {
+        if (!hasLocationPermission()) {
+            return;
+        }
+        android.location.Location loc = getLastKnownLocation();
+        if (loc == null) {
+            return;
+        }
+        Packet p = new Packet(Packet.TYPE_LOCATION);
+        p.srcId = deviceId;
+        p.name = username;
+        p.lat = loc.getLatitude();
+        p.lon = loc.getLongitude();
+        p.ttl = DEFAULT_TTL;
+        p.msgId = Packet.newMsgId();
+        neighborManager.markSeen(p.msgId);
+        neighborManager.broadcast(p, null);
+    }
+    
+    private android.location.Location getLastKnownLocation() {
+        try {
+            android.location.LocationManager lm =
+                    (android.location.LocationManager) getSystemService(LOCATION_SERVICE);
+            if (lm == null) {
+                return null;
+            }
+            android.location.Location best = null;
+            for (String prov : lm.getProviders(true)) {
+                android.location.Location l = lm.getLastKnownLocation(prov);
+                if (l != null && (best == null || l.getTime() > best.getTime())) {
+                    best = l;
+                }
+            }
+            return best;
+        } catch (SecurityException e) {
+            return null;
+        }
+    }
+    
+    // Update a peer's stored location and their pin on the map (main thread).
+    private void updatePeerLocation(String id, String name, double lat, double lon) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        synchronized (contacts) {
+            Contact c = contacts.get(id);
+            if (c == null) {
+                c = new Contact();
+                c.deviceId = id;
+                c.seq = -1;
+                contacts.put(id, c);
+            }
+            if (name != null && !name.isEmpty()) {
+                c.name = name;
+            }
+            c.lat = lat;
+            c.lon = lon;
+            c.hasLocation = true;
+            c.lastSeen = System.currentTimeMillis();
+        }
+        if (map == null) {
+            return;
+        }
+        Marker marker = peerMarkers.get(id);
+        if (marker == null) {
+            marker = new Marker(map);
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            map.getOverlays().add(marker);
+            peerMarkers.put(id, marker);
+        }
+        marker.setPosition(new GeoPoint(lat, lon));
+        String nm = (name != null && !name.isEmpty()) ? name : "Peer";
+        marker.setTitle(nm + " #" + shortId(id));
+        map.invalidate();
+    }
+    
+    // Broadcast a PRESENCE announcement into the mesh so others learn we exist.
+    private void emitPresence() {
+        presenceSeq++;
+        Packet p = new Packet(Packet.TYPE_PRESENCE);
+        p.srcId = deviceId;
+        p.name = username;
+        p.pubKey = (crypto != null) ? crypto.getPublicKeyBase64() : "";
+        p.seq = presenceSeq;
+        p.ttl = DEFAULT_TTL;
+        p.msgId = Packet.newMsgId();
+        neighborManager.markSeen(p.msgId);
+        neighborManager.broadcast(p, null);
+    }
+    
+    // Record/refresh a contact learned from a PRESENCE packet.
+    private void updateContact(String id, String name, String pubKey, int seq) {
+        if (id == null || id.isEmpty()) {
+            return;
+        }
+        synchronized (contacts) {
+            Contact c = contacts.get(id);
+            if (c == null) {
+                c = new Contact();
+                c.deviceId = id;
+                c.seq = -1;
+                contacts.put(id, c);
+            }
+            if (seq >= c.seq) {
+                if (name != null && !name.isEmpty()) {
+                    c.name = name;
+                }
+                if (pubKey != null && !pubKey.isEmpty()) {
+                    c.pubKey = pubKey;
+                }
+                c.seq = seq;
+            }
+            c.lastSeen = System.currentTimeMillis();
+        }
+        mainHandler.post(this::rebuildContactsUi);
+    }
+    
+    // Rebuild the "People Online" list from current contacts (main thread only).
+    private void rebuildContactsUi() {
+        if (contactsAdapter == null) {
+            return;
+        }
+        contactsAdapter.clear();
+        contactIdOrder.clear();
+        long now = System.currentTimeMillis();
+        synchronized (contacts) {
+            for (Contact c : contacts.values()) {
+                if (now - c.lastSeen <= CONTACT_TIMEOUT_MS) {
+                    contactIdOrder.add(c.deviceId);
+                    String marker = c.deviceId.equals(currentTargetId) ? "   ✓ (chatting)" : "";
+                    String nm = (c.name != null && !c.name.isEmpty()) ? c.name : "Unknown";
+                    contactsAdapter.add(nm + " #" + shortId(c.deviceId) + marker);
+                }
+            }
+        }
+    }
+    
+    // Drop contacts that have gone silent for too long (called on main thread).
+    private void pruneContacts() {
+        long now = System.currentTimeMillis();
+        synchronized (contacts) {
+            java.util.Iterator<java.util.Map.Entry<String, Contact>> it = contacts.entrySet().iterator();
+            while (it.hasNext()) {
+                if (now - it.next().getValue().lastSeen > CONTACT_TIMEOUT_MS * 2) {
+                    it.remove();
+                }
+            }
+        }
+        rebuildContactsUi();
     }
     
     private void checkAndShowPermissionStatus() {
@@ -364,6 +900,67 @@ public class BluetoothChatActivity extends AppCompatActivity {
         // Start listening and request discoverability. Scanning auto-starts once
         // the discoverable prompt returns (see onActivityResult).
         startServer();
+    }
+    
+    // Enter/leave hands-off Relay Mode: auto-accept, auto-connect, forward, and stay alive.
+    private void toggleRelayMode() {
+        if (!relayMode) {
+            if (!hasBluetoothPermissions()) {
+                requestBluetoothPermissions();
+                return;
+            }
+            requestNotificationPermissionIfNeeded();
+            
+            relayMode = true;
+            autoConnect = true;
+            attemptedAddresses.clear();
+            
+            // Start listening + discoverable + scanning (same as Connect).
+            startServer();
+            // Keep re-scanning so we keep finding and reconnecting to neighbors.
+            mainHandler.postDelayed(rescanTask, RESCAN_INTERVAL_MS);
+            // Keep the process alive in the background.
+            startRelayService();
+            
+            btnRelayMode.setText("Stop Relaying");
+            btnRelayMode.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFD32F2F));
+            updateRelayStatus();
+            statusText.setText("Relay Mode: forwarding messages for nearby devices");
+            Toast.makeText(this, "Relay Mode on. Allow discoverability, then leave the app running.", Toast.LENGTH_LONG).show();
+        } else {
+            relayMode = false;
+            autoConnect = false;
+            mainHandler.removeCallbacks(rescanTask);
+            stopRelayService();
+            
+            btnRelayMode.setText("Start Relaying");
+            btnRelayMode.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFFF9800));
+            updateNeighborStatus();
+            Toast.makeText(this, "Relay Mode off", Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    private void startRelayService() {
+        Intent intent = new Intent(this, RelayService.class);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+    }
+    
+    private void stopRelayService() {
+        stopService(new Intent(this, RelayService.class));
+    }
+    
+    private void requestNotificationPermissionIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                        REQUEST_POST_NOTIFICATIONS);
+            }
+        }
     }
     
     private void discoverDevices() {
@@ -490,15 +1087,42 @@ public class BluetoothChatActivity extends AppCompatActivity {
             .show();
     }
     
-    private void connectToDevice(BluetoothDevice device) {
-        if (isConnected) {
-            Toast.makeText(this, "Already connected to a device. Disconnect first.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+    // Show discovered Bluetooth devices in a dialog so the Chat tab stays focused on
+    // People Online + Messages. Tapping a device links to it; "Scan" re-runs discovery.
+    private void showNearbyDevicesDialog() {
+        ListView list = new ListView(this);
+        list.setAdapter(deviceListAdapter);
         
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Nearby Devices")
+                .setView(list)
+                .setNeutralButton("Scan", null)
+                .setNegativeButton("Close", null)
+                .create();
+        
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            if (position < discoveredDevices.size()) {
+                connectToDevice(discoveredDevices.get(position));
+                dialog.dismiss();
+            }
+        });
+        
+        dialog.setOnShowListener(d -> {
+            Button scan = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+            if (scan != null) {
+                scan.setOnClickListener(v -> discoverDevices());   // re-scan without closing
+            }
+        });
+        
+        dialog.show();
+        discoverDevices();   // kick off a fresh scan when opening
+    }
+    
+    private void connectToDevice(BluetoothDevice device) {
         new Thread(() -> {
+            BluetoothSocket socket = null;
             try {
-                clientSocket = device.createRfcommSocketToServiceRecord(MY_UUID);
+                socket = device.createRfcommSocketToServiceRecord(MY_UUID);
                 
                 // Cancel discovery to improve connection speed
                 try {
@@ -509,30 +1133,21 @@ public class BluetoothChatActivity extends AppCompatActivity {
                     Log.e(TAG, "Permission error cancelling discovery", e);
                 }
                 
-                mainHandler.post(() -> statusText.setText("Connecting to " + device.getName() + "..."));
+                mainHandler.post(() -> statusText.setText("Connecting..."));
                 
-                clientSocket.connect();
+                socket.connect();
                 
-                mainHandler.post(() -> {
-                    String deviceName = "Unknown";
-                    try {
-                        deviceName = device.getName() != null ? device.getName() : "Unknown Device";
-                    } catch (SecurityException e) {
-                        Log.e(TAG, "Permission error getting device name", e);
-                    }
-                    statusText.setText("Connected to " + deviceName);
-                    isConnected = true;
-                    startConnectedThread(clientSocket);
-                    // Send username to peer
-                    sendUsernameHandshake();
-                    Toast.makeText(BluetoothChatActivity.this, "Connected successfully!", Toast.LENGTH_SHORT).show();
-                });
+                // Hand the connected socket to the neighbor manager as an outgoing link.
+                neighborManager.addLink(socket, true);
                 
             } catch (IOException e) {
                 Log.e(TAG, "Connection failed", e);
+                if (socket != null) {
+                    try { socket.close(); } catch (IOException ignored) {}
+                }
                 mainHandler.post(() -> {
                     statusText.setText("Connection failed: " + e.getMessage());
-                    Toast.makeText(BluetoothChatActivity.this, "Connection failed. Make sure the other device has started the server.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(BluetoothChatActivity.this, "Connection failed. Make sure the other device is running NINE.", Toast.LENGTH_LONG).show();
                 });
             } catch (SecurityException e) {
                 Log.e(TAG, "Permission error during connection", e);
@@ -544,35 +1159,196 @@ public class BluetoothChatActivity extends AppCompatActivity {
         }).start();
     }
     
-    private void startConnectedThread(BluetoothSocket socket) {
-        isConnected = true;
-        mainHandler.post(() -> updateConnectionIndicator(true));
-        connectedThread = new ConnectedThread(socket);
-        connectedThread.start();
+    private void sendMessage() {
+        String message = messageInput.getText().toString().trim();
+        if (message.isEmpty()) {
+            Toast.makeText(this, "Please enter a message", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (neighborManager.count() == 0) {
+            Toast.makeText(this, "Not connected to any device", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // Address the message to the selected contact, or broadcast if none is selected.
+        String dst = (currentTargetId != null) ? currentTargetId : "";
+        String payload = message;
+        boolean encrypted = false;
+        
+        // Encrypt addressed messages end-to-end when we have the recipient's public key,
+        // so relays only carry ciphertext they cannot read.
+        if (!dst.isEmpty()) {
+            String recipientKey;
+            synchronized (contacts) {
+                Contact c = contacts.get(dst);
+                recipientKey = (c != null) ? c.pubKey : null;
+            }
+            if (recipientKey != null && !recipientKey.isEmpty()) {
+                String enc = crypto.encryptFor(recipientKey, message);
+                if (enc != null) {
+                    payload = enc;
+                    encrypted = true;
+                }
+            }
+            if (!encrypted) {
+                Toast.makeText(this, "No encryption key for recipient yet — sending unencrypted", Toast.LENGTH_SHORT).show();
+            }
+        }
+        
+        Packet msg = Packet.message(deviceId, dst, username, payload, DEFAULT_TTL);
+        neighborManager.markSeen(msg.msgId);   // don't re-deliver our own message if it echoes back
+        neighborManager.broadcast(msg, null);
+        
+        String label = dst.isEmpty() ? username : (username + " → " + currentTargetName);
+        String lockIcon = encrypted ? " \uD83D\uDD12" : "";
+        String baseText = label + lockIcon + ": " + message;
+        
+        if (!dst.isEmpty()) {
+            // Addressed message: show a "sending" marker and track it for delivery/retry.
+            messageAdapter.add(baseText + "  (sending\u2026)");
+            Pending pend = new Pending();
+            pend.packet = msg;
+            pend.attempts = 1;
+            pend.lastSent = System.currentTimeMillis();
+            pend.preview = message;
+            pend.uiIndex = messageItems.size() - 1;
+            pend.baseText = baseText;
+            pending.put(msg.msgId, pend);
+        } else {
+            messageAdapter.add(baseText);
+        }
+        messageInput.setText("");
     }
     
-    private void sendUsernameHandshake() {
-        if (connectedThread != null) {
-            String handshake = "USERNAME:" + username;
-            connectedThread.write(handshake.getBytes());
+    // Refresh the header status/dot based on how many neighbors are connected.
+    private void updateNeighborStatus() {
+        int count = neighborManager.count();
+        isConnected = count > 0;
+        updateConnectionIndicator(isConnected);
+        if (count == 0) {
+            statusText.setText("Not connected");
+            btnConnect.setEnabled(true);
+            btnConnect.setText("Connect");
+        } else if (count == 1) {
+            statusText.setText("Connected to: " + neighborManager.describeNeighbors());
+        } else {
+            statusText.setText(count + " devices connected: " + neighborManager.describeNeighbors());
+        }
+        updateRelayStatus();
+    }
+    
+    // Live status shown on the Relay tab.
+    private void updateRelayStatus() {
+        if (relayStatus == null) {
+            return;
+        }
+        int n = (neighborManager != null) ? neighborManager.count() : 0;
+        if (relayMode) {
+            relayStatus.setText("Relaying • " + n + " neighbor(s) • " + forwardedCount + " message(s) forwarded");
+        } else {
+            relayStatus.setText("Relay is off • " + n + " neighbor(s) connected");
         }
     }
     
-    private void sendMessage() {
-        String message = messageInput.getText().toString().trim();
-        if (!message.isEmpty() && connectedThread != null) {
-            // Format: username::MSG::message
-            String formattedMessage = username + MESSAGE_SEPARATOR + message;
-            connectedThread.write(formattedMessage.getBytes());
-            messageAdapter.add(username + ": " + message);
-            messageInput.setText("");
-            
-            // Show success message
-            Toast.makeText(this, "Message sent successfully", Toast.LENGTH_SHORT).show();
-        } else if (message.isEmpty()) {
-            Toast.makeText(this, "Please enter a message", Toast.LENGTH_SHORT).show();
-        } else {
-            Toast.makeText(this, "Not connected to any device", Toast.LENGTH_SHORT).show();
+    // Dispatch a packet received on a specific link. Runs on the link's read thread.
+    private void onLinkPacket(Link link, Packet pkt) {
+        if (pkt == null || pkt.type == null) {
+            return;
+        }
+        switch (pkt.type) {
+            case Packet.TYPE_HELLO: {
+                // Learn the peer's identity and register the link by device ID (with dedup).
+                link.peerId = pkt.srcId;
+                link.peerName = (pkt.name != null && !pkt.name.isEmpty()) ? pkt.name : "Peer";
+                neighborManager.registerPeer(link);
+                // Announce ourselves right away so the new neighbor (and the mesh) learns us.
+                emitPresence();
+                mainHandler.post(() -> {
+                    updateNeighborStatus();
+                    Toast.makeText(this, link.peerName + " #" + shortId(link.peerId) + " connected", Toast.LENGTH_SHORT).show();
+                });
+                break;
+            }
+            case Packet.TYPE_MSG: {
+                boolean isBroadcast = (pkt.dstId == null || pkt.dstId.isEmpty());
+                boolean addressedToMe = !isBroadcast && pkt.dstId.equals(deviceId);
+                boolean seen = neighborManager.hasSeen(pkt.msgId);
+                
+                if (addressedToMe) {
+                    // Always acknowledge (even a duplicate) so a lost ACK can be recovered.
+                    sendAck(pkt);
+                    if (!seen) {
+                        neighborManager.markSeen(pkt.msgId);
+                        deliverMessage(pkt);
+                    }
+                    break;   // we're the destination; don't relay further
+                }
+                
+                // Not for us: controlled flooding with dedup + TTL.
+                if (seen) {
+                    break;
+                }
+                neighborManager.markSeen(pkt.msgId);
+                if (isBroadcast) {
+                    deliverMessage(pkt);   // broadcasts are shown by everyone
+                }
+                pkt.ttl -= 1;
+                if (pkt.ttl > 0) {
+                    neighborManager.broadcast(pkt, link);   // exclude the link it came from
+                    forwardedCount++;
+                    mainHandler.post(this::updateRelayStatus);
+                }
+                break;
+            }
+            case Packet.TYPE_ACK: {
+                // Delivery confirmation. Deliver to sender or relay onward.
+                if (neighborManager.hasSeen(pkt.msgId)) {
+                    break;
+                }
+                neighborManager.markSeen(pkt.msgId);
+                if (pkt.dstId != null && pkt.dstId.equals(deviceId)) {
+                    markDelivered(pkt.payload);   // payload carries the acknowledged msgId
+                } else {
+                    pkt.ttl -= 1;
+                    if (pkt.ttl > 0) {
+                        neighborManager.broadcast(pkt, link);
+                    }
+                }
+                break;
+            }
+            case Packet.TYPE_PRESENCE: {
+                // Learn who is reachable across the mesh, then flood the announcement onward.
+                if (neighborManager.hasSeen(pkt.msgId)) {
+                    break;
+                }
+                neighborManager.markSeen(pkt.msgId);
+                if (pkt.srcId != null && !pkt.srcId.equals(deviceId)) {
+                    updateContact(pkt.srcId, pkt.name, pkt.pubKey, pkt.seq);
+                }
+                pkt.ttl -= 1;
+                if (pkt.ttl > 0) {
+                    neighborManager.broadcast(pkt, link);
+                }
+                break;
+            }
+            case Packet.TYPE_LOCATION: {
+                // Learn a peer's GPS position, plot it, then flood onward.
+                if (neighborManager.hasSeen(pkt.msgId)) {
+                    break;
+                }
+                neighborManager.markSeen(pkt.msgId);
+                if (pkt.srcId != null && !pkt.srcId.equals(deviceId)) {
+                    final Packet fp = pkt;
+                    mainHandler.post(() -> updatePeerLocation(fp.srcId, fp.name, fp.lat, fp.lon));
+                }
+                pkt.ttl -= 1;
+                if (pkt.ttl > 0) {
+                    neighborManager.broadcast(pkt, link);
+                }
+                break;
+            }
+            default:
+                // Unknown packet type; ignore.
+                break;
         }
     }
     
@@ -588,7 +1364,12 @@ public class BluetoothChatActivity extends AppCompatActivity {
                             discoveredDevices.add(device);
                             String deviceName = device.getName() != null ? device.getName() : "Unknown Device";
                             deviceListAdapter.add(deviceName + "\n" + device.getAddress());
-                            Toast.makeText(BluetoothChatActivity.this, "Found device: " + deviceName, Toast.LENGTH_SHORT).show();
+                        }
+                        // In auto-connect (Relay Mode), try to link to newly found devices
+                        // automatically. Non-NINE devices simply fail the RFCOMM connect.
+                        if (autoConnect && device.getAddress() != null
+                                && attemptedAddresses.add(device.getAddress())) {
+                            connectToDevice(device);
                         }
                     } catch (SecurityException e) {
                         Log.e(TAG, "Permission error accessing device info", e);
@@ -603,93 +1384,177 @@ public class BluetoothChatActivity extends AppCompatActivity {
         }
     };
     
-    private class ConnectedThread extends Thread {
+    /**
+     * A single Bluetooth connection to one neighbor. Runs its own read thread and
+     * sends a HELLO on start so both sides learn each other's device ID.
+     */
+    private class Link extends Thread {
         private final BluetoothSocket socket;
-        private final InputStream inputStream;
-        private final OutputStream outputStream;
+        private final boolean initiatedByUs;   // true if we dialed out; used for dedup tie-break
+        private DataInputStream dataIn;
+        private DataOutputStream dataOut;
+        volatile String peerId = "";
+        volatile String peerName = "Peer";
+        private volatile boolean closed = false;
         
-        public ConnectedThread(BluetoothSocket socket) {
+        Link(BluetoothSocket socket, boolean initiatedByUs) {
             this.socket = socket;
-            InputStream tmpIn = null;
-            OutputStream tmpOut = null;
-            
+            this.initiatedByUs = initiatedByUs;
             try {
-                tmpIn = socket.getInputStream();
-                tmpOut = socket.getOutputStream();
+                dataIn = new DataInputStream(socket.getInputStream());
+                dataOut = new DataOutputStream(socket.getOutputStream());
             } catch (IOException e) {
-                Log.e(TAG, "Error creating streams", e);
+                Log.e(TAG, "Error creating link streams", e);
             }
-            
-            inputStream = tmpIn;
-            outputStream = tmpOut;
+        }
+        
+        boolean initiatedByUs() {
+            return initiatedByUs;
         }
         
         public void run() {
-            byte[] buffer = new byte[1024];
-            int bytes;
-            
-            while (true) {
+            // Announce our identity first.
+            writePacket(Packet.hello(deviceId, username));
+            while (!closed) {
                 try {
-                    bytes = inputStream.read(buffer);
-                    String receivedMessage = new String(buffer, 0, bytes);
-                    
-                    // Handle username handshake
-                    if (receivedMessage.startsWith("USERNAME:")) {
-                        peerUsername = receivedMessage.substring(9);
-                        mainHandler.post(() -> {
-                            statusText.setText("Connected to: " + peerUsername);
-                            Toast.makeText(BluetoothChatActivity.this, peerUsername + " joined the chat", Toast.LENGTH_SHORT).show();
-                        });
-                    } 
-                    // Handle regular message with username
-                    else if (receivedMessage.contains(MESSAGE_SEPARATOR)) {
-                        String[] parts = receivedMessage.split(MESSAGE_SEPARATOR, 2);
-                        if (parts.length == 2) {
-                            String senderName = parts[0];
-                            String messageText = parts[1];
-                            mainHandler.post(() -> messageAdapter.add(senderName + ": " + messageText));
-                        }
+                    Packet pkt = Packet.readFrom(dataIn);
+                    if (pkt == null) {
+                        throw new IOException("Peer closed the connection");
                     }
-                    // Handle legacy message without username
-                    else {
-                        mainHandler.post(() -> messageAdapter.add(peerUsername + ": " + receivedMessage));
-                    }
-                    
+                    onLinkPacket(this, pkt);
                 } catch (IOException e) {
-                    Log.e(TAG, "Connection lost", e);
-                    mainHandler.post(() -> {
-                        statusText.setText("Connection lost");
-                        isConnected = false;
-                        updateConnectionIndicator(false);
-                        btnConnect.setEnabled(true);
-                        btnConnect.setText("Connect");
-                        Toast.makeText(BluetoothChatActivity.this, peerUsername + " disconnected", Toast.LENGTH_SHORT).show();
-                        
-                        // Restart server if we were in server mode
-                        if (isServer && acceptThread != null && !acceptThread.isInterrupted()) {
-                            statusText.setText("Server ready. Waiting for new connections...");
-                        }
-                    });
+                    if (!closed) {
+                        Log.e(TAG, "Link lost to #" + shortId(peerId), e);
+                    }
+                    neighborManager.remove(this);
                     break;
                 }
             }
         }
         
-        public void write(byte[] bytes) {
+        void writePacket(Packet p) {
             try {
-                outputStream.write(bytes);
+                if (dataOut != null) {
+                    p.writeTo(dataOut);
+                }
             } catch (IOException e) {
-                Log.e(TAG, "Error writing message", e);
-                mainHandler.post(() -> Toast.makeText(BluetoothChatActivity.this, "Failed to send message", Toast.LENGTH_SHORT).show());
+                Log.e(TAG, "Error writing packet", e);
+                neighborManager.remove(this);
             }
         }
         
-        public void cancel() {
+        void close() {
+            closed = true;
             try {
                 socket.close();
             } catch (IOException e) {
-                Log.e(TAG, "Error closing socket", e);
+                Log.e(TAG, "Error closing link socket", e);
             }
+        }
+    }
+    
+    /**
+     * Holds all active neighbor links and provides broadcast/dedup helpers.
+     * This is what makes multi-hop relaying possible: a device can be connected
+     * to several neighbors at once and forward packets between them.
+     */
+    private class NeighborManager {
+        // Keyed by peer device ID once HELLO is received.
+        private final java.util.concurrent.ConcurrentHashMap<String, Link> neighbors =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        // Links that have connected but not yet sent HELLO.
+        private final java.util.Set<Link> pending =
+                java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+        // Recently seen message IDs (dedupe / loop prevention). Bounded FIFO.
+        private final java.util.LinkedHashMap<String, Long> seen =
+                new java.util.LinkedHashMap<String, Long>() {
+                    @Override
+                    protected boolean removeEldestEntry(java.util.Map.Entry<String, Long> eldest) {
+                        return size() > 512;
+                    }
+                };
+        
+        void addLink(BluetoothSocket socket, boolean initiatedByUs) {
+            Link link = new Link(socket, initiatedByUs);
+            pending.add(link);
+            link.start();
+        }
+        
+        // Called when a HELLO is received on a link. Registers it by peer ID and
+        // resolves duplicate links to the same peer (keep the one initiated by the
+        // device with the lower ID).
+        synchronized void registerPeer(Link link) {
+            pending.remove(link);
+            if (link.peerId == null || link.peerId.isEmpty()) {
+                return;
+            }
+            Link existing = neighbors.get(link.peerId);
+            if (existing != null && existing != link) {
+                boolean weAreLower = deviceId.compareTo(link.peerId) < 0;
+                // The lower-ID device is the canonical initiator. Keep the matching link.
+                Link keep = weAreLower
+                        ? (link.initiatedByUs() ? link : existing)
+                        : (link.initiatedByUs() ? existing : link);
+                Link drop = (keep == link) ? existing : link;
+                drop.close();
+                neighbors.put(link.peerId, keep);
+            } else {
+                neighbors.put(link.peerId, link);
+            }
+        }
+        
+        void remove(Link link) {
+            pending.remove(link);
+            if (link.peerId != null) {
+                neighbors.remove(link.peerId, link);
+            }
+            link.close();
+            mainHandler.post(BluetoothChatActivity.this::updateNeighborStatus);
+        }
+        
+        int count() {
+            return neighbors.size();
+        }
+        
+        // Send a packet to every neighbor except the one it came from (split-horizon).
+        void broadcast(Packet pkt, Link exclude) {
+            for (Link link : neighbors.values()) {
+                if (link != exclude) {
+                    link.writePacket(pkt);
+                }
+            }
+        }
+        
+        synchronized boolean hasSeen(String msgId) {
+            return msgId != null && !msgId.isEmpty() && seen.containsKey(msgId);
+        }
+        
+        synchronized void markSeen(String msgId) {
+            if (msgId != null && !msgId.isEmpty()) {
+                seen.put(msgId, System.currentTimeMillis());
+            }
+        }
+        
+        String describeNeighbors() {
+            StringBuilder sb = new StringBuilder();
+            for (Link link : neighbors.values()) {
+                if (sb.length() > 0) {
+                    sb.append(", ");
+                }
+                sb.append(link.peerName).append(" #").append(shortId(link.peerId));
+            }
+            return sb.toString();
+        }
+        
+        void closeAll() {
+            for (Link link : neighbors.values()) {
+                link.close();
+            }
+            neighbors.clear();
+            for (Link link : pending) {
+                link.close();
+            }
+            pending.clear();
         }
     }
     
@@ -712,35 +1577,16 @@ public class BluetoothChatActivity extends AppCompatActivity {
         }
         
         public void run() {
-            BluetoothSocket socket;
-            
-            // Keep listening until exception occurs or socket is closed
+            // Keep listening and accept multiple simultaneous connections. Each accepted
+            // socket becomes an incoming neighbor link.
             while (true) {
                 try {
-                    // This will block until a connection is accepted
-                    socket = serverSocket.accept();
-                    
+                    BluetoothSocket socket = serverSocket.accept();
                     if (socket != null) {
-                        // Create final reference for lambda
-                        final BluetoothSocket finalSocket = socket;
-                        
-                        // Connection accepted
-                        mainHandler.post(() -> {
-                            statusText.setText("Client connected!");
-                            startConnectedThread(finalSocket);
-                            sendUsernameHandshake();
-                        });
-                        
-                        // Wait for this connection to finish before accepting new ones
-                        while (isConnected) {
-                            Thread.sleep(1000);
-                        }
+                        neighborManager.addLink(socket, false);
                     }
                 } catch (IOException e) {
-                    Log.e(TAG, "Server socket accept failed", e);
-                    break;
-                } catch (InterruptedException e) {
-                    Log.e(TAG, "Accept thread interrupted", e);
+                    Log.e(TAG, "Server socket accept ended", e);
                     break;
                 }
             }
@@ -825,6 +1671,22 @@ public class BluetoothChatActivity extends AppCompatActivity {
     }
     
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (map != null) {
+            map.onResume();
+        }
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (map != null) {
+            map.onPause();
+        }
+    }
+    
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         
@@ -836,21 +1698,23 @@ public class BluetoothChatActivity extends AppCompatActivity {
             Log.e(TAG, "Receiver not registered", e);
         }
         
-        if (connectedThread != null) {
-            connectedThread.cancel();
+        if (mainHandler != null) {
+            mainHandler.removeCallbacks(presenceTask);
+            mainHandler.removeCallbacks(rescanTask);
+            mainHandler.removeCallbacks(retryTask);
+        }
+        
+        if (relayMode) {
+            stopRelayService();
+        }
+        
+        if (neighborManager != null) {
+            neighborManager.closeAll();
         }
         
         if (acceptThread != null) {
             acceptThread.cancel();
             acceptThread.interrupt();
-        }
-        
-        if (clientSocket != null) {
-            try {
-                clientSocket.close();
-            } catch (IOException e) {
-                Log.e(TAG, "Error closing client socket", e);
-            }
         }
         
         try {
