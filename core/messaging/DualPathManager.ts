@@ -1,0 +1,238 @@
+/**
+ * NINE Messaging — Dual-Path Manager
+ *
+ * Orchestrates the splitting, routing, and reassembly of secure messages.
+ * The encrypted message and encrypted key travel independent mesh paths.
+ * Only Admin can reassemble and decrypt.
+ */
+
+import { randomBytes } from 'node:crypto';
+import { type NodeID, type PacketID, type Timestamp, PacketType } from '../shared/Types.js';
+import { type Packet } from '../protocol/Packet.js';
+import { createPacket } from '../protocol/PacketFactory.js';
+import { serialize } from '../protocol/Serializer.js';
+import { KeyManager, type SecureMessageBundle } from '../security/KeyManager.js';
+import { PathSelector } from './PathSelector.js';
+import { ReassemblyManager } from './ReassemblyManager.js';
+
+export interface DualPathMetrics {
+  messagesSent: number;
+  messagesDelivered: number;
+  messagesTimedOut: number;
+  duplicatesSuppressed: number;
+  averageReconstructionMs: number;
+  dualPathUsed: number;
+  singlePathFallback: number;
+}
+
+export interface SendResult {
+  sessionId: string;
+  dataPacketId: PacketID;
+  keyPacketId: PacketID;
+  dualPathAchieved: boolean;
+}
+
+export type RoutedSendFn = (packetBytes: Buffer, path: NodeID[]) => void;
+
+export class DualPathManager {
+  private readonly selfId: NodeID;
+  private readonly keyManager: KeyManager;
+  private readonly pathSelector: PathSelector;
+  readonly reassembly: ReassemblyManager;
+  private readonly routedSend: RoutedSendFn;
+  private readonly clock: () => Timestamp;
+  private _metrics: DualPathMetrics = {
+    messagesSent: 0, messagesDelivered: 0, messagesTimedOut: 0,
+    duplicatesSuppressed: 0, averageReconstructionMs: 0,
+    dualPathUsed: 0, singlePathFallback: 0,
+  };
+
+  constructor(config: {
+    selfId: NodeID;
+    keyManager: KeyManager;
+    pathSelector: PathSelector;
+    routedSend: RoutedSendFn;
+    clock: () => Timestamp;
+    reassemblyTimeoutMs?: number;
+  }) {
+    this.selfId = config.selfId;
+    this.keyManager = config.keyManager;
+    this.pathSelector = config.pathSelector;
+    this.routedSend = config.routedSend;
+    this.clock = config.clock;
+    this.reassembly = new ReassemblyManager(config.reassemblyTimeoutMs ?? 30000);
+  }
+
+  /**
+   * Send a secure message to Admin using dual-path delivery.
+   */
+  sendSecureMessage(plaintext: string, adminId: NodeID): SendResult {
+    const now = this.clock();
+    const message = Buffer.from(plaintext, 'utf-8');
+
+    // Encrypt: AES for message, RSA for key
+    const bundle = this.keyManager.encryptForAdmin(message, now);
+
+    // Generate session ID linking both packets
+    const sessionId = randomBytes(8).toString('hex');
+
+    // Create ENCRYPTED_MESSAGE packet (SECURE_DATA)
+    const dataPayload = this.encodeDataPayload(sessionId, bundle);
+    const dataPacket = createPacket({
+      packetType: PacketType.ENCRYPTED_MESSAGE,
+      senderId: this.selfId,
+      destinationId: adminId,
+      sequenceNumber: Date.now() % 0xFFFFFFFF,
+      ttl: 20,
+      payload: dataPayload,
+      timestamp: now,
+    });
+
+    // Create KEY_PACKET (SECURE_KEY)
+    const keyPayload = this.encodeKeyPayload(sessionId, bundle);
+    const keyPacket = createPacket({
+      packetType: PacketType.KEY_PACKET,
+      senderId: this.selfId,
+      destinationId: adminId,
+      sequenceNumber: (Date.now() + 1) % 0xFFFFFFFF,
+      ttl: 20,
+      payload: keyPayload,
+      timestamp: now,
+    });
+
+    // Get two paths
+    const paths = this.pathSelector.selectPaths(this.selfId, adminId);
+    const dualPathAchieved = paths.disjoint;
+
+    // Send data on path A, key on path B
+    this.routedSend(serialize(dataPacket), paths.pathA);
+    this.routedSend(serialize(keyPacket), dualPathAchieved ? paths.pathB : paths.pathA);
+
+    if (dualPathAchieved) this._metrics.dualPathUsed++;
+    else this._metrics.singlePathFallback++;
+    this._metrics.messagesSent++;
+
+    return {
+      sessionId,
+      dataPacketId: dataPacket.header.packetId,
+      keyPacketId: keyPacket.header.packetId,
+      dualPathAchieved,
+    };
+  }
+
+  /**
+   * Handle incoming ENCRYPTED_MESSAGE at Admin.
+   */
+  handleSecureData(packet: Packet): string | null {
+    const now = this.clock();
+    const { sessionId, ciphertext, iv, tag } = this.decodeDataPayload(packet.payload);
+
+    const result = this.reassembly.receiveData(sessionId, ciphertext, iv, tag, packet.header.senderId, now);
+    if (result === 'duplicate') { this._metrics.duplicatesSuppressed++; return null; }
+    if (result === 'waiting') return null;
+
+    // Both halves ready — decrypt
+    return this.tryDecrypt(sessionId, now);
+  }
+
+  /**
+   * Handle incoming KEY_PACKET at Admin.
+   */
+  handleSecureKey(packet: Packet): string | null {
+    const now = this.clock();
+    const { sessionId, encryptedKey } = this.decodeKeyPayload(packet.payload);
+
+    const result = this.reassembly.receiveKey(sessionId, encryptedKey, now);
+    if (result === 'duplicate') { this._metrics.duplicatesSuppressed++; return null; }
+    if (result === 'waiting') return null;
+
+    // Both halves ready — decrypt
+    return this.tryDecrypt(sessionId, now);
+  }
+
+  /** Attempt decryption when both halves are available. */
+  private tryDecrypt(sessionId: string, now: Timestamp): string | null {
+    const assembled = this.reassembly.getAssembled(sessionId);
+    if (!assembled) return null;
+
+    try {
+      const bundle: SecureMessageBundle = {
+        ciphertext: assembled.ciphertext,
+        iv: assembled.iv,
+        tag: assembled.tag,
+        encryptedKey: assembled.encryptedKey,
+        sessionKeyId: sessionId,
+      };
+      const plaintext = this.keyManager.decryptAsAdmin(bundle);
+      this.reassembly.complete(sessionId);
+      this._metrics.messagesDelivered++;
+
+      const reconTime = (now as number) - (assembled.firstReceivedAt as number);
+      this._metrics.averageReconstructionMs =
+        (this._metrics.averageReconstructionMs * (this._metrics.messagesDelivered - 1) + reconTime) /
+        this._metrics.messagesDelivered;
+
+      return plaintext.toString('utf-8');
+    } catch {
+      this.reassembly.complete(sessionId);
+      return null;
+    }
+  }
+
+  /** Evict timed-out partial messages. */
+  tick(): number {
+    const timedOut = this.reassembly.evictExpired(this.clock());
+    this._metrics.messagesTimedOut += timedOut;
+    return timedOut;
+  }
+
+  getMetrics(): DualPathMetrics { return { ...this._metrics }; }
+
+  // ─── Payload Encoding ────────────────────────────────────────────
+
+  private encodeDataPayload(sessionId: string, bundle: SecureMessageBundle): Buffer {
+    // sessionId(16 hex = 8 raw bytes) + ivLen(1) + iv + tagLen(1) + tag + cipherLen(2) + cipher
+    const sidBuf = Buffer.from(sessionId, 'hex');
+    const buf = Buffer.alloc(8 + 1 + bundle.iv.length + 1 + bundle.tag.length + 2 + bundle.ciphertext.length);
+    let off = 0;
+    sidBuf.copy(buf, off); off += 8;
+    buf.writeUInt8(bundle.iv.length, off); off += 1;
+    bundle.iv.copy(buf, off); off += bundle.iv.length;
+    buf.writeUInt8(bundle.tag.length, off); off += 1;
+    bundle.tag.copy(buf, off); off += bundle.tag.length;
+    buf.writeUInt16BE(bundle.ciphertext.length, off); off += 2;
+    bundle.ciphertext.copy(buf, off);
+    return buf;
+  }
+
+  private encodeKeyPayload(sessionId: string, bundle: SecureMessageBundle): Buffer {
+    const sidBuf = Buffer.from(sessionId, 'hex');
+    const buf = Buffer.alloc(8 + 2 + bundle.encryptedKey.length);
+    let off = 0;
+    sidBuf.copy(buf, off); off += 8;
+    buf.writeUInt16BE(bundle.encryptedKey.length, off); off += 2;
+    bundle.encryptedKey.copy(buf, off);
+    return buf;
+  }
+
+  private decodeDataPayload(payload: Buffer): { sessionId: string; ciphertext: Buffer; iv: Buffer; tag: Buffer } {
+    let off = 0;
+    const sessionId = payload.subarray(off, off + 8).toString('hex'); off += 8;
+    const ivLen = payload.readUInt8(off); off += 1;
+    const iv = Buffer.from(payload.subarray(off, off + ivLen)); off += ivLen;
+    const tagLen = payload.readUInt8(off); off += 1;
+    const tag = Buffer.from(payload.subarray(off, off + tagLen)); off += tagLen;
+    const cipherLen = payload.readUInt16BE(off); off += 2;
+    const ciphertext = Buffer.from(payload.subarray(off, off + cipherLen));
+    return { sessionId, ciphertext, iv, tag };
+  }
+
+  private decodeKeyPayload(payload: Buffer): { sessionId: string; encryptedKey: Buffer } {
+    let off = 0;
+    const sessionId = payload.subarray(off, off + 8).toString('hex'); off += 8;
+    const keyLen = payload.readUInt16BE(off); off += 2;
+    const encryptedKey = Buffer.from(payload.subarray(off, off + keyLen));
+    return { sessionId, encryptedKey };
+  }
+
+}
