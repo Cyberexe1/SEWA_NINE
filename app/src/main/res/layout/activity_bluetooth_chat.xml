@@ -241,17 +241,34 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <org.osmdroid.views.MapView
-                android:id="@+id/map"
+            <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="1" />
+                android:layout_weight="1">
+
+                <org.osmdroid.views.MapView
+                    android:id="@+id/map"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <ImageButton
+                    android:id="@+id/btn_place_pin"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="start|top"
+                    android:layout_margin="12dp"
+                    android:src="@android:drawable/ic_menu_myplaces"
+                    android:background="#FFFFFF"
+                    android:contentDescription="Drop a pin"
+                    android:elevation="4dp"
+                    android:padding="8dp" />
+            </FrameLayout>
 
             <TextView
                 android:id="@+id/map_status"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Online: shows live map. Download your area to use it offline."
+                android:text="Download your 3 km area for offline use. Long-press anywhere to get directions."
                 android:textSize="12sp"
                 android:textColor="#616161"
                 android:padding="10dp" />
@@ -278,12 +295,24 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:text="Download this area"
-                    android:textSize="13sp"
+                    android:text="Download area (map + routing)"
+                    android:textSize="12sp"
                     android:backgroundTint="#4CAF50"
                     android:textColor="@android:color/white"
                     android:layout_marginStart="6dp" />
             </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_download_routing"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Download offline routing data"
+                android:textSize="13sp"
+                android:backgroundTint="#9C27B0"
+                android:textColor="@android:color/white"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="8dp" />
         </LinearLayout>
 
         <!-- ===================== SETTINGS SECTION ===================== -->

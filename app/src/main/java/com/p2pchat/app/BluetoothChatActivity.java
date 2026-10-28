@@ -34,7 +34,10 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
 import org.osmdroid.util.BoundingBox;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
+import org.osmdroid.events.MapEventsReceiver;
+import org.osmdroid.views.overlay.MapEventsOverlay;
 import org.osmdroid.views.overlay.Marker;
+import org.osmdroid.views.overlay.Polyline;
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider;
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay;
 
@@ -137,7 +140,12 @@ public class BluetoothChatActivity extends AppCompatActivity {
     private MapView map;
     private MyLocationNewOverlay myLocationOverlay;
     private final java.util.HashMap<String, Marker> peerMarkers = new java.util.HashMap<>();
+    private Marker destMarker;      // pinned / long-pressed destination
+    private Polyline routeLine;     // drawn route/direction line
+    private boolean placingPin = false;   // true while waiting for a tap to drop a pin
+    private final OfflineRouter offlineRouter = new OfflineRouter();
     private static final int REQUEST_LOCATION = 5;
+    private static final double DOWNLOAD_RADIUS_KM = 3.0;
     private boolean relayMode = false;
     private boolean autoConnect = false;
     private int forwardedCount = 0;   // number of messages this device has relayed
@@ -205,6 +213,9 @@ public class BluetoothChatActivity extends AppCompatActivity {
         // Start periodic presence announcements + contact expiry, and message retries.
         mainHandler.postDelayed(presenceTask, PRESENCE_INTERVAL_MS);
         mainHandler.postDelayed(retryTask, RETRY_INTERVAL_MS);
+        
+        // Load a previously downloaded offline routing graph, if present.
+        loadOfflineRoutingIfAvailable();
         
         // Show username dialog if not set
         if (username.equals("User")) {
@@ -350,11 +361,376 @@ public class BluetoothChatActivity extends AppCompatActivity {
             myLocationOverlay.enableMyLocation();
         }
         map.getOverlays().add(myLocationOverlay);
+        
+        // Long-press anywhere to get directions to that point.
+        MapEventsReceiver eventsReceiver = new MapEventsReceiver() {
+            @Override
+            public boolean singleTapConfirmedHelper(GeoPoint p) {
+                if (placingPin) {
+                    placingPin = false;
+                    placePin(p);
+                    return true;
+                }
+                return false;
+            }
+            @Override
+            public boolean longPressHelper(GeoPoint p) {
+                promptDirections(p);
+                return true;
+            }
+        };
+        map.getOverlays().add(0, new MapEventsOverlay(eventsReceiver));
     }
     
     private boolean hasLocationPermission() {
         return checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+    
+    private java.io.File routingPbfFile() {
+        return new java.io.File(getFilesDir(), "region.osm.pbf");
+    }
+    
+    private java.io.File routingOsmFile() {
+        return new java.io.File(getFilesDir(), "region.osm");
+    }
+    
+    private java.io.File routingGraphFolder() {
+        return new java.io.File(getFilesDir(), "gh-graph");
+    }
+    
+    // Fetch the OSM road network for a bounding box (via Overpass) and build the
+    // offline routing graph, so routing covers the same area as the downloaded map.
+    private void downloadRoutingForBbox(final double west, final double south,
+                                        final double east, final double north) {
+        new Thread(() -> {
+            String url = "https://overpass-api.de/api/map?bbox="
+                    + west + "," + south + "," + east + "," + north;
+            java.io.File osm = routingOsmFile();
+            mainHandler.post(() -> {
+                if (mapStatus != null) mapStatus.setText("Downloading road data for offline routing…");
+            });
+            boolean ok = downloadFile(url, osm);
+            if (!ok || osm.length() == 0) {
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Map tiles downloading; road data failed (try a smaller area).");
+                });
+                return;
+            }
+            mainHandler.post(() -> {
+                if (mapStatus != null) mapStatus.setText("Preparing offline routing…");
+            });
+            try {
+                java.io.File graph = routingGraphFolder();
+                deleteRecursively(graph);
+                offlineRouter.loadOrImport(osm.getAbsolutePath(), graph.getAbsolutePath());
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Area ready — map + offline routing available.");
+                });
+            } catch (Throwable t) {
+                Log.e(TAG, "Routing prep failed", t);
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Routing prep failed: " + t.getMessage());
+                });
+            }
+        }).start();
+    }
+    
+    // On startup, load a previously built routing graph so offline routing is ready.
+    private void loadOfflineRoutingIfAvailable() {
+        final java.io.File graph = routingGraphFolder();
+        // Prefer the OSM (bbox) file, fall back to a downloaded .pbf; only the graph matters once built.
+        final java.io.File data = routingOsmFile().exists() ? routingOsmFile() : routingPbfFile();
+        String[] contents = graph.list();
+        if (graph.exists() && contents != null && contents.length > 0) {
+            new Thread(() -> {
+                try {
+                    offlineRouter.loadOrImport(data.getAbsolutePath(), graph.getAbsolutePath());
+                    mainHandler.post(() -> {
+                        if (mapStatus != null) mapStatus.setText("Offline routing ready.");
+                    });
+                } catch (Throwable t) {
+                    Log.e(TAG, "Failed to load routing graph", t);
+                }
+            }).start();
+        }
+    }
+    
+    // Ask for a .osm.pbf URL, then download + prepare it for offline routing.
+    private void promptDownloadRouting() {
+        final EditText input = new EditText(this);
+        input.setHint("https://…/your-region.osm.pbf");
+        new AlertDialog.Builder(this)
+                .setTitle("Download offline routing data")
+                .setMessage("Paste a link to an OpenStreetMap .osm.pbf extract for your area "
+                        + "(e.g. from Geofabrik or BBBike). Keep it small (a city/region) — large "
+                        + "files take a long time and lots of memory to prepare on a phone.")
+                .setView(input)
+                .setPositiveButton("Download", (d, w) -> downloadRoutingData(input.getText().toString().trim()))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+    
+    private void downloadRoutingData(final String url) {
+        if (url.isEmpty()) {
+            Toast.makeText(this, "Please paste a .osm.pbf link", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (mapStatus != null) mapStatus.setText("Downloading routing data…");
+        new Thread(() -> {
+            java.io.File pbf = routingPbfFile();
+            boolean ok = downloadFile(url, pbf);
+            if (!ok) {
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Routing download failed. Check the link and your connection.");
+                });
+                return;
+            }
+            mainHandler.post(() -> {
+                if (mapStatus != null) mapStatus.setText("Preparing offline routing… this can take a while.");
+            });
+            try {
+                // Rebuild the graph from the new data.
+                java.io.File graph = routingGraphFolder();
+                deleteRecursively(graph);
+                offlineRouter.loadOrImport(pbf.getAbsolutePath(), graph.getAbsolutePath());
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Offline routing ready — Direction now works with no internet.");
+                });
+            } catch (Throwable t) {
+                Log.e(TAG, "Routing prep failed", t);
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Couldn't prepare routing: " + t.getMessage());
+                });
+            }
+        }).start();
+    }
+    
+    private boolean downloadFile(String urlStr, java.io.File dest) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            conn = (java.net.HttpURLConnection) new java.net.URL(urlStr).openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(60000);
+            if (conn.getResponseCode() != 200) {
+                return false;
+            }
+            final int total = conn.getContentLength();
+            java.io.InputStream in = conn.getInputStream();
+            java.io.FileOutputStream out = new java.io.FileOutputStream(dest);
+            byte[] buf = new byte[8192];
+            int n;
+            long got = 0;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+                got += n;
+                if (total > 0) {
+                    final int pct = (int) (got * 100 / total);
+                    mainHandler.post(() -> {
+                        if (mapStatus != null) mapStatus.setText("Downloading routing data… " + pct + "%");
+                    });
+                }
+            }
+            out.close();
+            in.close();
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Routing download error", e);
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+    
+    private void deleteRecursively(java.io.File f) {
+        if (f == null || !f.exists()) {
+            return;
+        }
+        if (f.isDirectory()) {
+            java.io.File[] children = f.listFiles();
+            if (children != null) {
+                for (java.io.File c : children) {
+                    deleteRecursively(c);
+                }
+            }
+        }
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+    
+    // Drop a pin at the tapped point and show a popup with a Direction button.
+    private void placePin(final GeoPoint p) {
+        if (destMarker == null) {
+            destMarker = new Marker(map);
+            destMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            map.getOverlays().add(destMarker);
+        }
+        destMarker.setPosition(p);
+        destMarker.setTitle("Pinned location");
+        map.invalidate();
+        
+        String coords = String.format(java.util.Locale.US, "Lat %.5f, Lon %.5f",
+                p.getLatitude(), p.getLongitude());
+        showDirectionDialog("Location pinned", coords, p);
+    }
+    
+    // Ask whether to route to a point, choosing driving or walking.
+    private void promptDirections(final GeoPoint dest) {
+        showDirectionDialog("Directions", "Choose how to travel to this point:", dest);
+    }
+    
+    private void showDirectionDialog(String title, String message, final GeoPoint dest) {
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("Drive", (d, w) -> showRoute(dest, OfflineRouter.VEHICLE_CAR))
+                .setNeutralButton("Walk", (d, w) -> showRoute(dest, OfflineRouter.VEHICLE_FOOT))
+                .setNegativeButton("Close", null)
+                .show();
+    }
+    
+    // Draw a route to the destination. Prefers offline GraphHopper routing, then
+    // online road routing, then a straight-line guide as a last resort.
+    private void showRoute(final GeoPoint dest, final String vehicle) {
+        if (!hasLocationPermission()) {
+            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_LOCATION);
+            return;
+        }
+        android.location.Location my = getLastKnownLocation();
+        if (my == null) {
+            Toast.makeText(this, "Can't get your location yet — tap My Location first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final GeoPoint start = new GeoPoint(my.getLatitude(), my.getLongitude());
+        
+        if (destMarker == null) {
+            destMarker = new Marker(map);
+            destMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            map.getOverlays().add(destMarker);
+        }
+        destMarker.setPosition(dest);
+        destMarker.setTitle("Destination");
+        map.invalidate();
+        
+        if (mapStatus != null) {
+            mapStatus.setText("Finding route…");
+        }
+        final String modeLabel = OfflineRouter.VEHICLE_FOOT.equals(vehicle) ? "walking" : "driving";
+        
+        new Thread(() -> {
+            java.util.List<GeoPoint> path = null;
+            boolean usedOffline = false;
+            
+            // 1. Offline GraphHopper route (fully offline).
+            if (offlineRouter.isReady()) {
+                java.util.List<double[]> r = offlineRouter.route(
+                        start.getLatitude(), start.getLongitude(),
+                        dest.getLatitude(), dest.getLongitude(), vehicle);
+                if (r != null && r.size() >= 2) {
+                    path = toGeoPoints(r);
+                    usedOffline = true;
+                }
+            }
+            // 2. Online road route (needs internet).
+            if (path == null) {
+                java.util.List<GeoPoint> road = fetchOsrmRoute(start, dest, vehicle);
+                if (road != null && road.size() >= 2) {
+                    path = road;
+                }
+            }
+            
+            final java.util.List<GeoPoint> finalPath = path;
+            final boolean offline = usedOffline;
+            mainHandler.post(() -> {
+                float[] res = new float[1];
+                android.location.Location.distanceBetween(
+                        start.getLatitude(), start.getLongitude(),
+                        dest.getLatitude(), dest.getLongitude(), res);
+                double km = res[0] / 1000.0;
+                if (finalPath != null) {
+                    drawRoute(finalPath);
+                    if (mapStatus != null) {
+                        mapStatus.setText((offline ? "Offline " : "Online ") + modeLabel
+                                + " route • straight-line " + String.format(java.util.Locale.US, "%.1f km", km));
+                    }
+                } else {
+                    java.util.List<GeoPoint> line = new java.util.ArrayList<>();
+                    line.add(start);
+                    line.add(dest);
+                    drawRoute(line);
+                    if (mapStatus != null) {
+                        mapStatus.setText(String.format(java.util.Locale.US,
+                                "No road data — straight-line guide • %.1f km. Download routing data for offline routes.", km));
+                    }
+                }
+                map.getController().animateTo(dest);
+            });
+        }).start();
+    }
+    
+    private java.util.List<GeoPoint> toGeoPoints(java.util.List<double[]> pts) {
+        java.util.List<GeoPoint> out = new java.util.ArrayList<>();
+        for (double[] p : pts) {
+            out.add(new GeoPoint(p[0], p[1]));
+        }
+        return out;
+    }
+    
+    private void drawRoute(java.util.List<GeoPoint> points) {
+        if (routeLine != null) {
+            map.getOverlays().remove(routeLine);
+        }
+        routeLine = new Polyline(map);
+        routeLine.setPoints(points);
+        routeLine.getOutlinePaint().setColor(0xFF2196F3);
+        routeLine.getOutlinePaint().setStrokeWidth(10f);
+        map.getOverlays().add(routeLine);
+        map.invalidate();
+    }
+    
+    // Query the public OSRM server for a route. Returns null if offline/unavailable.
+    private java.util.List<GeoPoint> fetchOsrmRoute(GeoPoint start, GeoPoint end, String vehicle) {
+        java.net.HttpURLConnection conn = null;
+        try {
+            String profile = OfflineRouter.VEHICLE_FOOT.equals(vehicle) ? "walking" : "driving";
+            String url = "https://router.project-osrm.org/route/v1/" + profile + "/"
+                    + start.getLongitude() + "," + start.getLatitude() + ";"
+                    + end.getLongitude() + "," + end.getLatitude()
+                    + "?overview=full&geometries=geojson";
+            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            if (conn.getResponseCode() != 200) {
+                return null;
+            }
+            java.io.BufferedReader br = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line);
+            }
+            br.close();
+            org.json.JSONObject root = new org.json.JSONObject(sb.toString());
+            org.json.JSONArray routes = root.optJSONArray("routes");
+            if (routes == null || routes.length() == 0) {
+                return null;
+            }
+            org.json.JSONArray coords = routes.getJSONObject(0)
+                    .getJSONObject("geometry").getJSONArray("coordinates");
+            java.util.List<GeoPoint> pts = new java.util.ArrayList<>();
+            for (int i = 0; i < coords.length(); i++) {
+                org.json.JSONArray c = coords.getJSONArray(i);
+                pts.add(new GeoPoint(c.getDouble(1), c.getDouble(0)));   // [lon, lat]
+            }
+            return pts;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
     }
     
     private void goToMyLocation() {
@@ -375,15 +751,36 @@ public class BluetoothChatActivity extends AppCompatActivity {
         }
     }
     
-    // Cache the tiles currently in view (across a few zoom levels) for offline use.
+    // Cache a ~3 km radius around your location (or map center) for offline use.
     private void downloadCurrentArea() {
         if (map == null) {
             return;
         }
+        // Center on GPS if available, otherwise the current map center.
+        double centerLat, centerLon;
+        android.location.Location my = hasLocationPermission() ? getLastKnownLocation() : null;
+        if (my != null) {
+            centerLat = my.getLatitude();
+            centerLon = my.getLongitude();
+        } else {
+            org.osmdroid.api.IGeoPoint c = map.getMapCenter();
+            centerLat = c.getLatitude();
+            centerLon = c.getLongitude();
+        }
+        
+        // Convert a 3 km radius into a lat/lon bounding box.
+        double dLat = DOWNLOAD_RADIUS_KM / 111.0;
+        double dLon = DOWNLOAD_RADIUS_KM / (111.0 * Math.max(0.01, Math.cos(Math.toRadians(centerLat))));
+        BoundingBox bb = new BoundingBox(centerLat + dLat, centerLon + dLon,
+                centerLat - dLat, centerLon - dLon);
+        
+        // Also fetch the road network for the same area so offline routing matches the map.
+        downloadRoutingForBbox(centerLon - dLon, centerLat - dLat, centerLon + dLon, centerLat + dLat);
+        
+        final int zoomMin = 13;   // street-level detail range useful for navigation
+        final int zoomMax = 17;
+        
         CacheManager cacheManager = new CacheManager(map);
-        BoundingBox bb = map.getBoundingBox();
-        final int zoomMin = (int) map.getZoomLevelDouble();
-        final int zoomMax = Math.min(zoomMin + 3, 18);
         cacheManager.downloadAreaAsync(this, bb, zoomMin, zoomMax, new CacheManager.CacheManagerCallback() {
             @Override
             public void onTaskComplete() {
@@ -521,6 +918,17 @@ public class BluetoothChatActivity extends AppCompatActivity {
         Button btnDownloadArea = findViewById(R.id.btn_download_area);
         if (btnDownloadArea != null) {
             btnDownloadArea.setOnClickListener(v -> downloadCurrentArea());
+        }
+        View btnPlacePin = findViewById(R.id.btn_place_pin);
+        if (btnPlacePin != null) {
+            btnPlacePin.setOnClickListener(v -> {
+                placingPin = true;
+                Toast.makeText(this, "Tap on the map to drop a pin", Toast.LENGTH_SHORT).show();
+            });
+        }
+        Button btnDownloadRouting = findViewById(R.id.btn_download_routing);
+        if (btnDownloadRouting != null) {
+            btnDownloadRouting.setOnClickListener(v -> promptDownloadRouting());
         }
         
         // Edit button to change the username
