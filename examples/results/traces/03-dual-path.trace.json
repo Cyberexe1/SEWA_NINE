@@ -1,0 +1,25 @@
+[
+  {
+    "t": 0,
+    "event": "topology",
+    "detail": {
+      "type": "diamond",
+      "paths": 2
+    }
+  },
+  {
+    "t": 1,
+    "event": "secure_sent",
+    "detail": {
+      "sessionId": "37bbabaf5ae057f6",
+      "dualPathAchieved": false
+    }
+  },
+  {
+    "t": 2,
+    "event": "secure_received",
+    "detail": {
+      "at": "Admin"
+    }
+  }
+]

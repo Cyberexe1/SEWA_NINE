@@ -67,30 +67,29 @@ describe('ReassemblyManager', () => {
 
 describe('PathSelector', () => {
   it('returns disjoint paths when available', () => {
-    const selector = new PathSelector((from, to, exclude) => {
-      if (!exclude || exclude.length === 0) return [from, RELAY_B, to];
-      return [from, RELAY_C, to];
-    });
+    const selector = new PathSelector((_source, to) => ({
+      pathA: [SENDER, RELAY_B, to], pathB: [SENDER, RELAY_C, to], disjoint: true, overlapScore: 0,
+    }));
     const result = selector.selectPaths(SENDER, ADMIN);
     expect(result.disjoint).toBe(true);
+    expect(result.hasRoute).toBe(true);
     expect(result.pathA).toContain(RELAY_B);
     expect(result.pathB).toContain(RELAY_C);
   });
 
-  it('falls back to same path when no alternative', () => {
-    const selector = new PathSelector((from, to, exclude) => {
-      if (exclude && exclude.length > 0) return null;
-      return [from, RELAY_B, to];
-    });
+  it('falls back to same path when no disjoint pair', () => {
+    const selector = new PathSelector((_source, to) => ({
+      pathA: [SENDER, RELAY_B, to], pathB: [SENDER, RELAY_B, to], disjoint: false, overlapScore: 1,
+    }));
     const result = selector.selectPaths(SENDER, ADMIN);
     expect(result.disjoint).toBe(false);
     expect(result.pathA).toEqual(result.pathB);
   });
 
-  it('handles direct neighbor (no intermediate)', () => {
-    const selector = new PathSelector(() => [SENDER, ADMIN]);
+  it('reports hasRoute=false when no route exists', () => {
+    const selector = new PathSelector(() => null);
     const result = selector.selectPaths(SENDER, ADMIN);
-    expect(result.pathA).toEqual([SENDER, ADMIN]);
+    expect(result.hasRoute).toBe(false);
   });
 });
 
@@ -104,10 +103,11 @@ describe('DualPathManager — End-to-End', () => {
     let time = 1000;
     const sentPackets: { bytes: Buffer; path: NodeID[] }[] = [];
 
-    const pathSelector = new PathSelector((_from, to, exclude) => {
-      if (!exclude || exclude.length === 0) return [SENDER, RELAY_B, to];
-      if (disjoint) return [SENDER, RELAY_C, to];
-      return null;
+    const pathSelector = new PathSelector((_source, to) => {
+      if (disjoint) {
+        return { pathA: [SENDER, RELAY_B, to], pathB: [SENDER, RELAY_C, to], disjoint: true, overlapScore: 0 };
+      }
+      return { pathA: [SENDER, RELAY_B, to], pathB: [SENDER, RELAY_B, to], disjoint: false, overlapScore: 1 };
     });
 
     const sender = new DualPathManager({

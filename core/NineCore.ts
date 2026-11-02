@@ -74,33 +74,52 @@ export class NineCore {
     this.keyManager = deps.keyManager;
     this.clock = deps.clock;
 
-    // Wire the routing engine to the transport (sync bridge, best-effort)
+    // Wire the routing engine to the transport (sync bridge, best-effort).
+    // onRouteAdded lets the DualPathManager transmit queued secure sends as
+    // soon as (disjoint) routes are discovered.
     this.routing = new RoutingEngine({
       selfId: this.node.nodeId,
-      send: (to, data) => { void this.transport.send(to as unknown as NodeID as any, data); return true; },
+      send: (to, data) => { void this.transport.send(to as unknown as any, data); return true; },
       broadcast: (data) => { void this.transport.broadcast(data); return this.neighborTable.size(); },
       deliver: (packet) => this.handleDelivered(packet),
       getNeighbors: () => this.getNeighborIds(),
       clock: this.clock,
+      onRouteAdded: (dest) => { this.dualPath?.retryPending(dest); },
     });
 
-    // Path selector uses routing's route cache
-    const pathSelector = new PathSelector((_from, to, exclude) => {
-      const route = this.routing.routeCache.getRoute(to, this.clock());
-      if (!route) return null;
-      if (exclude && exclude.some(id => route.fullPath.some(p => p.toLowerCase() === id.toLowerCase()))) {
-        return null; // path overlaps excluded nodes
+    // Path selector requests a node-disjoint route pair from the routing engine.
+    const pathSelector = new PathSelector((_source, destination) => {
+      // Direct neighbour → single link; both packets travel it directly.
+      const neighbors = this.getNeighborIds();
+      if (neighbors.some(n => n.toLowerCase() === destination.toLowerCase())) {
+        const p = [this.node.nodeId, destination];
+        return { pathA: p, pathB: p, disjoint: false, overlapScore: 0 };
       }
-      return [...route.fullPath];
+      const pair = this.routing.getDisjointRoutes(destination);
+      if (!pair) return null;
+      return {
+        pathA: [...pair.primary.fullPath],
+        pathB: [...pair.secondary.fullPath],
+        disjoint: pair.disjoint,
+        overlapScore: pair.overlapScore,
+      };
     });
 
     this.dualPath = new DualPathManager({
       selfId: this.node.nodeId,
       keyManager: this.keyManager,
       pathSelector,
-      routedSend: (bytes) => {
-        const pkt = parse(bytes);
-        this.routing.sendPacket(pkt, bytes);
+      // Send each half to the FIRST HOP of its assigned path (source routing
+      // of the split). Relays forward toward the Admin using their route cache.
+      routedSend: (bytes, path) => {
+        if (path.length >= 2) {
+          void this.transport.send(path[1] as unknown as any, bytes);
+        } else if (path.length === 1) {
+          void this.transport.send(path[0] as unknown as any, bytes);
+        } else {
+          const pkt = parse(bytes);
+          this.routing.sendPacket(pkt, bytes);
+        }
       },
       clock: this.clock,
       reassemblyTimeoutMs: this.config.reassemblyTimeoutMs,
@@ -207,7 +226,18 @@ export class NineCore {
       throw new Error('ADMIN_KEY_NOT_AVAILABLE: cannot send secure message');
     }
     const result = this.dualPath.sendSecureMessage(message, adminId);
+    // If no route yet, trigger discovery; DualPathManager transmits the split
+    // via retryPending() once (disjoint) routes are installed.
+    if (result.pending) {
+      this.routing.initiateDiscovery(adminId);
+    }
     return { sessionId: result.sessionId, dualPathAchieved: result.dualPathAchieved };
+  }
+
+  /** Proactively discover route(s) to a destination (warms the route cache). */
+  discoverRoute(destinationId: NodeID): void {
+    this.assertActive();
+    this.routing.initiateDiscovery(destinationId);
   }
 
   /** Feed raw incoming bytes (used when a transport delivers data). */

@@ -1,60 +1,54 @@
 /**
  * NINE Messaging — Path Selector
  *
- * Selects two node-disjoint paths for dual-path delivery.
- * Falls back to single path if only one exists.
+ * Requests a node-disjoint route pair from the Routing Engine (multi-route
+ * cache). No longer derives paths independently — the routing layer owns
+ * route knowledge and disjointness scoring.
  */
 
 import { type NodeID } from '../shared/Types.js';
 
 export interface DualPaths {
+  /** Full path for the message (SECURE_DATA). */
   pathA: NodeID[];
+  /** Full path for the key (SECURE_KEY). */
   pathB: NodeID[];
+  /** True if the two paths are node-disjoint. */
   disjoint: boolean;
+  /** True if at least one usable route exists. */
+  hasRoute: boolean;
+  /** Number of shared intermediate nodes between the two paths. */
+  overlapScore: number;
 }
 
-export type GetRouteFn = (from: NodeID, to: NodeID, excludeNodes?: NodeID[]) => NodeID[] | null;
+/**
+ * Provided by NineCore/RoutingEngine. Returns a disjoint (or minimal-overlap)
+ * route pair for the destination, or null if no route is known.
+ */
+export type DisjointRouteProvider = (
+  source: NodeID,
+  destination: NodeID,
+) => { pathA: NodeID[]; pathB: NodeID[]; disjoint: boolean; overlapScore: number } | null;
 
 export class PathSelector {
-  private readonly getRoute: GetRouteFn;
+  private readonly provider: DisjointRouteProvider;
 
-  constructor(getRoute: GetRouteFn) {
-    this.getRoute = getRoute;
+  constructor(provider: DisjointRouteProvider) {
+    this.provider = provider;
   }
 
-  /**
-   * Select two paths from source to destination.
-   * Attempts node-disjoint paths; falls back to same path.
-   */
+  /** Select two paths from source to destination using the routing engine. */
   selectPaths(source: NodeID, destination: NodeID): DualPaths {
-    // Path A: standard route
-    const pathA = this.getRoute(source, destination);
-    if (!pathA || pathA.length === 0) {
-      return { pathA: [destination], pathB: [destination], disjoint: false };
+    const pair = this.provider(source, destination);
+    if (!pair) {
+      return { pathA: [], pathB: [], disjoint: false, hasRoute: false, overlapScore: Infinity };
     }
-
-    // Path B: exclude intermediate nodes from Path A
-    const intermediates = pathA.filter(
-      id => id.toLowerCase() !== source.toLowerCase() && id.toLowerCase() !== destination.toLowerCase()
-    );
-    const pathB = this.getRoute(source, destination, intermediates);
-
-    if (pathB && pathB.length > 0 && !this.hasOverlap(pathA, pathB, source, destination)) {
-      return { pathA, pathB, disjoint: true };
-    }
-
-    // Fallback: use same path
-    return { pathA, pathB: pathA, disjoint: false };
-  }
-
-  private hasOverlap(a: NodeID[], b: NodeID[], source: NodeID, dest: NodeID): boolean {
-    const intermediatesA = new Set(
-      a.filter(id => id.toLowerCase() !== source.toLowerCase() && id.toLowerCase() !== dest.toLowerCase())
-        .map(id => id.toLowerCase())
-    );
-    return b.some(id => {
-      const lower = id.toLowerCase();
-      return lower !== source.toLowerCase() && lower !== dest.toLowerCase() && intermediatesA.has(lower);
-    });
+    return {
+      pathA: pair.pathA,
+      pathB: pair.pathB,
+      disjoint: pair.disjoint,
+      hasRoute: true,
+      overlapScore: pair.overlapScore,
+    };
   }
 }

@@ -314,3 +314,116 @@ describe('Metrics collection', () => {
     expect(metrics.packetsForwarded).toBeGreaterThanOrEqual(0);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-ROUTE / DISJOINT-PATH SUPPORT (protocol defect fix)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('RouteCache — Multi-Route & Disjoint Selection', () => {
+  let cache: RouteCache;
+  beforeEach(() => { cache = new RouteCache(30000); });
+
+  it('stores multiple routes per destination', () => {
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    cache.addRoute(D, C, [A, C, D], 1, 1000 as Timestamp);
+    expect(cache.routeCount(D, 2000 as Timestamp)).toBe(2);
+  });
+
+  it('deduplicates identical paths (refresh, not duplicate)', () => {
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    const second = cache.addRoute(D, B, [A, B, D], 1, 1500 as Timestamp);
+    expect(second).toBe(false);
+    expect(cache.routeCount(D, 2000 as Timestamp)).toBe(1);
+  });
+
+  it('ranks primary by lowest hop count', () => {
+    cache.addRoute(D, C, [A, C, C, D], 1, 1000 as Timestamp); // 3 hops
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);    // 2 hops
+    const primary = cache.getPrimaryRoute(D, 2000 as Timestamp);
+    expect(primary!.nextHopId).toBe(B);
+  });
+
+  it('getDisjointRoutes returns disjoint pair when available', () => {
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    cache.addRoute(D, C, [A, C, D], 1, 1000 as Timestamp);
+    const pair = cache.getDisjointRoutes(D, 2000 as Timestamp);
+    expect(pair).not.toBeNull();
+    expect(pair!.disjoint).toBe(true);
+    expect(pair!.overlapScore).toBe(0);
+  });
+
+  it('getDisjointRoutes reports overlap when paths share intermediates', () => {
+    // Both routes go through B
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    cache.addRoute(D, B, [A, B, C, D], 2, 1000 as Timestamp);
+    const pair = cache.getDisjointRoutes(D, 2000 as Timestamp);
+    expect(pair!.disjoint).toBe(false);
+    expect(pair!.overlapScore).toBeGreaterThanOrEqual(1);
+  });
+
+  it('getSecondaryRoute returns the min-overlap alternative', () => {
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    cache.addRoute(D, C, [A, C, D], 1, 1000 as Timestamp);
+    const secondary = cache.getSecondaryRoute(D, 2000 as Timestamp);
+    expect(secondary).not.toBeNull();
+    expect(secondary!.nextHopId).toBe(C);
+  });
+
+  it('single route → disjoint pair uses same route (not disjoint)', () => {
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    const pair = cache.getDisjointRoutes(D, 2000 as Timestamp);
+    expect(pair!.disjoint).toBe(false);
+    expect(pair!.primary).toBe(pair!.secondary);
+  });
+
+  it('invalidateByNextHop removes routes containing the broken node', () => {
+    cache.addRoute(D, B, [A, B, D], 1, 1000 as Timestamp);
+    cache.addRoute(D, C, [A, C, D], 1, 1000 as Timestamp);
+    cache.invalidateByNextHop(B);
+    expect(cache.routeCount(D, 2000 as Timestamp)).toBe(1);
+    expect(cache.getPrimaryRoute(D, 2000 as Timestamp)!.nextHopId).toBe(C);
+  });
+});
+
+describe('Scenario 8: Genuine node-disjoint dual-path discovery', () => {
+  it('diamond topology discovers two disjoint routes to the destination', () => {
+    // Diamond: Source - RelayA - Admin  and  Source - RelayB - Admin
+    const clock = new VirtualClock(0);
+    const events = new SimulationEventBus();
+    const transport = new VirtualTransport(clock, events);
+    const latency = { latencyMs: 10, jitterMs: 0, packetLossRate: 0 };
+
+    const S = '00000001-aaaa-4bbb-8ccc-dddddddddddd' as NodeID;
+    const RA = '00000002-aaaa-4bbb-8ccc-dddddddddddd' as NodeID;
+    const RB = '00000003-aaaa-4bbb-8ccc-dddddddddddd' as NodeID;
+    const AD = '00000004-aaaa-4bbb-8ccc-dddddddddddd' as NodeID;
+
+    const engines = new Map<NodeID, RoutingEngine>();
+    for (const id of [S, RA, RB, AD]) {
+      const engine = new RoutingEngine({
+        selfId: id,
+        send: (to, data) => transport.send(id, to, data),
+        broadcast: (data) => transport.broadcast(id, data),
+        deliver: () => {},
+        getNeighbors: () => transport.getNeighbors(id),
+        clock: () => clock.now(),
+      });
+      transport.registerNode(id, (from, data) => engine.handleIncoming(from, data));
+      engines.set(id, engine);
+    }
+    transport.createLink(S, RA, latency);
+    transport.createLink(S, RB, latency);
+    transport.createLink(RA, AD, latency);
+    transport.createLink(RB, AD, latency);
+
+    // Source discovers routes to Admin
+    engines.get(S)!.initiateDiscovery(AD);
+    for (let i = 0; i < 30; i++) { clock.advance(10); transport.tick(); }
+
+    const pair = engines.get(S)!.getDisjointRoutes(AD);
+    expect(pair).not.toBeNull();
+    expect(engines.get(S)!.routeCache.routeCount(AD, clock.now())).toBeGreaterThanOrEqual(2);
+    expect(pair!.disjoint).toBe(true);
+    expect(pair!.overlapScore).toBe(0);
+  });
+});

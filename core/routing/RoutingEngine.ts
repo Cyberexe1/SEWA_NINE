@@ -38,6 +38,7 @@ export interface RoutingMetrics {
 export type SendFn = (to: NodeID, data: Buffer) => boolean;
 export type BroadcastFn = (data: Buffer) => number;
 export type DeliverFn = (packet: Packet) => void;
+export type RouteAddedFn = (destinationId: NodeID) => void;
 
 export interface RoutingEngineConfig {
   selfId: NodeID;
@@ -46,6 +47,7 @@ export interface RoutingEngineConfig {
   deliver: DeliverFn;
   getNeighbors: () => NodeID[];
   clock: () => Timestamp;
+  onRouteAdded?: RouteAddedFn;
 }
 
 export class RoutingEngine {
@@ -55,12 +57,18 @@ export class RoutingEngine {
   private readonly deliver: DeliverFn;
   private readonly getNeighbors: () => NodeID[];
   private readonly clock: () => Timestamp;
+  private readonly onRouteAdded?: RouteAddedFn;
 
   readonly dedup: DuplicatePacketCache;
   readonly routeCache: RouteCache;
   readonly discovery: RouteDiscovery;
   readonly pendingQueue: PendingMessageQueue;
   readonly ackManager: AckManager;
+
+  /** RREQ dedup: (source|seq) that this intermediate has already forwarded */
+  private readonly rreqForwarded: Set<string> = new Set();
+  /** RREQ dedup at destination: (source|seq) -> distinct path signatures already answered */
+  private readonly rreqAnswered: Map<string, Set<string>> = new Map();
 
   private _metrics: RoutingMetrics = {
     routesCreated: 0, routesInvalidated: 0, packetsForwarded: 0,
@@ -76,6 +84,7 @@ export class RoutingEngine {
     this.deliver = config.deliver;
     this.getNeighbors = config.getNeighbors;
     this.clock = config.clock;
+    this.onRouteAdded = config.onRouteAdded;
 
     this.dedup = new DuplicatePacketCache();
     this.routeCache = new RouteCache();
@@ -93,16 +102,23 @@ export class RoutingEngine {
 
     const { header } = packet;
 
-    // Duplicate check
+    // ROUTE_REQUEST uses path-aware dedup (handled inside), NOT the global
+    // packetId dedup — otherwise distinct-path copies would be dropped and
+    // only a single route could ever be discovered.
+    if (header.packetType === PacketType.ROUTE_REQUEST) {
+      this.handleRouteRequest(packet, from);
+      return;
+    }
+
+    // Duplicate check (all other packet types)
     if (this.dedup.hasSeen(header.packetId)) {
       this._metrics.duplicatesDetected++;
       return;
     }
     this.dedup.markSeen(header.packetId, this.clock());
 
-    // Dispatch by type
+    // Dispatch by type (ROUTE_REQUEST handled above with path-aware dedup)
     switch (header.packetType) {
-      case PacketType.ROUTE_REQUEST: this.handleRouteRequest(packet, from); break;
       case PacketType.ROUTE_REPLY: this.handleRouteReply(packet); break;
       case PacketType.ROUTE_ERROR: this.handleRouteError(packet); break;
       case PacketType.ACK: this.handleAck(packet); break;
@@ -199,7 +215,7 @@ export class RoutingEngine {
     }
   }
 
-  /** Handle ROUTE_REQUEST: reply if target or re-flood. */
+  /** Handle ROUTE_REQUEST: reply if target (per distinct path) or re-flood once. */
   private handleRouteRequest(packet: Packet, from: NodeID): void {
     const { targetNodeId, requestSeqNum, hopList } = this.discovery.decodeRouteRequest(packet.payload);
 
@@ -209,20 +225,33 @@ export class RoutingEngine {
 
     const now = this.clock();
     const newHopList = [...hopList, this.selfId];
+    const originatorId = hopList[0]!;
+    const flowKey = `${originatorId.toLowerCase()}|${requestSeqNum}`;
 
-    // Are we the target?
+    // Are we the target? Reply once PER DISTINCT PATH so multiple node-disjoint
+    // routes can be discovered in a single flood.
     if (targetNodeId.toLowerCase() === this.selfId.toLowerCase()) {
       const route = newHopList; // Path from source to us
-      const originatorId = hopList[0]!;
+      const pathSig = route.map(id => id.toLowerCase()).join('>');
+      let answered = this.rreqAnswered.get(flowKey);
+      if (!answered) { answered = new Set(); this.rreqAnswered.set(flowKey, answered); }
+      if (answered.has(pathSig)) { this._metrics.duplicatesDetected++; return; }
+      answered.add(pathSig);
+
       const rrepBytes = this.discovery.createRouteReply(
         this.selfId, originatorId, targetNodeId, requestSeqNum, route, now
       );
-      // Send RREP back along reverse path
       const prevHop = hopList[hopList.length - 1]!;
       this.send(prevHop, rrepBytes);
       this._metrics.routeRepliesSent++;
       return;
     }
+
+    // Intermediate: forward each (source|seq) only ONCE to prevent flooding
+    // storms. This still preserves every node-disjoint path to the target,
+    // because disjoint paths share no intermediate node.
+    if (this.rreqForwarded.has(flowKey)) { this._metrics.duplicatesDetected++; return; }
+    this.rreqForwarded.add(flowKey);
 
     // Re-flood with updated hopList
     const ttlResult = decrementTTL(packet);
@@ -257,19 +286,22 @@ export class RoutingEngine {
 
     // If we are the originator of the request
     if (route.length > 0 && route[0]!.toLowerCase() === this.selfId.toLowerCase()) {
-      // Install route
+      // Install route (multi-route cache keeps distinct paths)
       const nextHop = route.length > 1 ? route[1]! : targetNodeId;
-      this.routeCache.addRoute(targetNodeId, nextHop, route, requestSeqNum, now);
-      this._metrics.routesCreated++;
+      const isNew = this.routeCache.addRoute(targetNodeId, nextHop, route, requestSeqNum, now);
+      if (isNew) this._metrics.routesCreated++;
       this.discovery.completeDiscovery(targetNodeId);
 
-      // Flush pending queue
+      // Flush pending queue (best-effort, primary route)
       const pending = this.pendingQueue.dequeueFor(targetNodeId);
       for (const msg of pending) {
         this.send(nextHop, msg.serialized);
         this._metrics.packetsForwarded++;
       }
       this._metrics.pendingQueueSize = this.pendingQueue.size();
+
+      // Notify listeners (e.g. DualPathManager) that a route became available
+      if (this.onRouteAdded) this.onRouteAdded(targetNodeId);
       return;
     }
 
@@ -278,13 +310,42 @@ export class RoutingEngine {
     if (myIndex > 0) {
       // Also install partial route (I can reach targetNodeId via the next nodes)
       const nextHopForDest = route.length > myIndex + 1 ? route[myIndex + 1]! : targetNodeId;
-      this.routeCache.addRoute(targetNodeId, nextHopForDest, route.slice(myIndex), requestSeqNum, now);
-      this._metrics.routesCreated++;
+      const isNew = this.routeCache.addRoute(targetNodeId, nextHopForDest, route.slice(myIndex), requestSeqNum, now);
+      if (isNew) this._metrics.routesCreated++;
 
       // Forward toward source
       const prevNode = route[myIndex - 1]!;
       this.send(prevNode, serialize(packet));
       this._metrics.packetsForwarded++;
+    }
+  }
+
+  // ─── Public route accessors (multi-route API) ────────────────────
+
+  /** Primary route to a destination. */
+  getPrimaryRoute(destinationId: NodeID) {
+    return this.routeCache.getPrimaryRoute(destinationId, this.clock());
+  }
+
+  /** Secondary (min-overlap) route to a destination. */
+  getSecondaryRoute(destinationId: NodeID) {
+    return this.routeCache.getSecondaryRoute(destinationId, this.clock());
+  }
+
+  /** Disjoint (or minimal-overlap) route pair for dual-path. */
+  getDisjointRoutes(destinationId: NodeID) {
+    return this.routeCache.getDisjointRoutes(destinationId, this.clock());
+  }
+
+  /** Best route (alias for primary). */
+  getBestRoute(destinationId: NodeID) {
+    return this.routeCache.getBestRoute(destinationId, this.clock());
+  }
+
+  /** Public discovery trigger. */
+  initiateDiscovery(destinationId: NodeID): void {
+    if (!this.discovery.isPending(destinationId)) {
+      this.initiateRouteDiscovery(destinationId);
     }
   }
 

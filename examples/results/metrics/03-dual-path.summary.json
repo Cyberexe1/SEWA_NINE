@@ -1,0 +1,16 @@
+{
+  "example": "03-dual-path",
+  "sessionId": "37bbabaf5ae057f6",
+  "dualPathAchieved": true,
+  "reconstructed": true,
+  "dualPathMetrics": {
+    "messagesSent": 1,
+    "messagesDelivered": 0,
+    "messagesTimedOut": 0,
+    "duplicatesSuppressed": 0,
+    "averageReconstructionMs": 0,
+    "dualPathUsed": 1,
+    "singlePathFallback": 0
+  },
+  "success": true
+}

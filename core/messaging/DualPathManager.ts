@@ -30,9 +30,20 @@ export interface SendResult {
   dataPacketId: PacketID;
   keyPacketId: PacketID;
   dualPathAchieved: boolean;
+  pending: boolean;
 }
 
 export type RoutedSendFn = (packetBytes: Buffer, path: NodeID[]) => void;
+
+interface PendingSecureSend {
+  sessionId: string;
+  dataBytes: Buffer;
+  keyBytes: Buffer;
+  adminId: NodeID;
+  dataPacketId: PacketID;
+  keyPacketId: PacketID;
+  enqueuedAt: Timestamp;
+}
 
 export class DualPathManager {
   private readonly selfId: NodeID;
@@ -41,6 +52,8 @@ export class DualPathManager {
   readonly reassembly: ReassemblyManager;
   private readonly routedSend: RoutedSendFn;
   private readonly clock: () => Timestamp;
+  /** Secure sends waiting for a route to become available. */
+  private readonly pendingSends: Map<string, PendingSecureSend> = new Map();
   private _metrics: DualPathMetrics = {
     messagesSent: 0, messagesDelivered: 0, messagesTimedOut: 0,
     duplicatesSuppressed: 0, averageReconstructionMs: 0,
@@ -100,25 +113,67 @@ export class DualPathManager {
       timestamp: now,
     });
 
-    // Get two paths
-    const paths = this.pathSelector.selectPaths(this.selfId, adminId);
-    const dualPathAchieved = paths.disjoint;
-
-    // Send data on path A, key on path B
-    this.routedSend(serialize(dataPacket), paths.pathA);
-    this.routedSend(serialize(keyPacket), dualPathAchieved ? paths.pathB : paths.pathA);
-
-    if (dualPathAchieved) this._metrics.dualPathUsed++;
-    else this._metrics.singlePathFallback++;
     this._metrics.messagesSent++;
+    const dataBytes = serialize(dataPacket);
+    const keyBytes = serialize(keyPacket);
 
+    // Ask the routing engine for a disjoint route pair.
+    const paths = this.pathSelector.selectPaths(this.selfId, adminId);
+
+    if (!paths.hasRoute) {
+      // No route yet — queue and let retryPending()/tick() send once a route
+      // is discovered. NineCore triggers route discovery.
+      this.pendingSends.set(sessionId, {
+        sessionId, dataBytes, keyBytes, adminId,
+        dataPacketId: dataPacket.header.packetId,
+        keyPacketId: keyPacket.header.packetId,
+        enqueuedAt: now,
+      });
+      return {
+        sessionId,
+        dataPacketId: dataPacket.header.packetId,
+        keyPacketId: keyPacket.header.packetId,
+        dualPathAchieved: false,
+        pending: true,
+      };
+    }
+
+    this.transmitSplit(dataBytes, keyBytes, paths);
     return {
       sessionId,
       dataPacketId: dataPacket.header.packetId,
       keyPacketId: keyPacket.header.packetId,
-      dualPathAchieved,
+      dualPathAchieved: paths.disjoint,
+      pending: false,
     };
   }
+
+  /**
+   * Retry pending secure sends for a destination — called when a route
+   * becomes available. Transmits only when a node-disjoint pair exists,
+   * so dual-path is preferred over single-path fallback.
+   */
+  retryPending(destinationId: NodeID): void {
+    for (const [sessionId, p] of this.pendingSends) {
+      if (p.adminId.toLowerCase() !== destinationId.toLowerCase()) continue;
+      const paths = this.pathSelector.selectPaths(this.selfId, p.adminId);
+      if (paths.hasRoute && paths.disjoint) {
+        this.transmitSplit(p.dataBytes, p.keyBytes, paths);
+        this.pendingSends.delete(sessionId);
+      }
+    }
+  }
+
+  /** Transmit the data on path A and key on path B (or same path if not disjoint). */
+  private transmitSplit(dataBytes: Buffer, keyBytes: Buffer, paths: { pathA: NodeID[]; pathB: NodeID[]; disjoint: boolean }): void {
+    this.routedSend(dataBytes, paths.pathA);
+    this.routedSend(keyBytes, paths.disjoint ? paths.pathB : paths.pathA);
+    if (paths.disjoint) this._metrics.dualPathUsed++;
+    else this._metrics.singlePathFallback++;
+  }
+
+  /** Number of secure sends still awaiting a route. */
+  getPendingSendCount(): number { return this.pendingSends.size; }
 
   /**
    * Handle incoming ENCRYPTED_MESSAGE at Admin.
@@ -179,8 +234,17 @@ export class DualPathManager {
     }
   }
 
-  /** Evict timed-out partial messages. */
+  /** Evict timed-out partial messages and flush pending sends as fallback. */
   tick(): number {
+    // Flush any pending send that now has a route (single-path fallback if no
+    // disjoint pair materialised). This handles single-path topologies.
+    for (const [sessionId, p] of this.pendingSends) {
+      const paths = this.pathSelector.selectPaths(this.selfId, p.adminId);
+      if (paths.hasRoute) {
+        this.transmitSplit(p.dataBytes, p.keyBytes, paths);
+        this.pendingSends.delete(sessionId);
+      }
+    }
     const timedOut = this.reassembly.evictExpired(this.clock());
     this._metrics.messagesTimedOut += timedOut;
     return timedOut;

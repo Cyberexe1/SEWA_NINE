@@ -1,0 +1,8 @@
+{
+  "example": "01-broadcast",
+  "topology": "star",
+  "totalPeers": 4,
+  "delivered": 4,
+  "deliveryRate": 1,
+  "success": true
+}

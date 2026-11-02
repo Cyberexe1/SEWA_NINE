@@ -1,0 +1,39 @@
+[
+  {
+    "t": 0,
+    "event": "topology",
+    "detail": {
+      "type": "linear",
+      "nodes": 5
+    }
+  },
+  {
+    "t": 1,
+    "event": "broadcast_received",
+    "detail": {
+      "at": "E",
+      "hops": 3
+    }
+  },
+  {
+    "t": 2,
+    "event": "phase1_result",
+    "detail": {
+      "received": 1
+    }
+  },
+  {
+    "t": 3,
+    "event": "relay_failure",
+    "detail": {
+      "failed": "C"
+    }
+  },
+  {
+    "t": 4,
+    "event": "phase2_result",
+    "detail": {
+      "received": 0
+    }
+  }
+]

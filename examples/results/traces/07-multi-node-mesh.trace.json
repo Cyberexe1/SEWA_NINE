@@ -1,0 +1,25 @@
+[
+  {
+    "t": 0,
+    "event": "topology",
+    "detail": {
+      "type": "multi_floor",
+      "nodes": 8
+    }
+  },
+  {
+    "t": 1,
+    "event": "broadcast_reach",
+    "detail": {
+      "reached": 7,
+      "total": 7
+    }
+  },
+  {
+    "t": 2,
+    "event": "secure_delivery",
+    "detail": {
+      "count": 1
+    }
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "example": "02-secure-message",
+  "sessionId": "a462985d2faf557d",
+  "decrypted": "Field report: sector 7 secured, 3 civilians evacuated",
+  "matchesOriginal": true,
+  "success": true
+}

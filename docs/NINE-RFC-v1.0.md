@@ -1415,11 +1415,16 @@ The following areas require design decisions before the protocol can be consider
 
 **Decision needed for scalability beyond demo scope.**
 
-### Q10: Dual-Path Verification
+### Q10: Dual-Path Verification — RESOLVED
 
-**Problem:** How does the sender know whether dual-path was actually achieved? The routing layer may silently degrade to single-path.
-
-**Decision needed:** Should the sender be notified? Should the ACK from Admin indicate whether both paths were distinct?
+**Decision:** The Routing Engine maintains multiple candidate routes per
+destination and computes node-disjoint pairs (`getDisjointRoutes`). The
+DualPathManager reports whether a genuine node-disjoint pair was used
+(`dualPathUsed`) versus single-path fallback (`singlePathFallback`). The sender
+is notified via the send result and metrics. Route discovery replies to each
+distinct-path RREQ so multiple disjoint routes are learned in one flood. If no
+disjoint pair exists, the system falls back to the minimum-overlap pair and
+records the overlap score.
 
 ---
 

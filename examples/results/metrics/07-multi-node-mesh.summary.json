@@ -1,0 +1,9 @@
+{
+  "example": "07-multi-node-mesh",
+  "nodes": 8,
+  "broadcastReached": 7,
+  "broadcastReachedAll": true,
+  "secureDelivered": 1,
+  "secureSuccess": true,
+  "success": true
+}
