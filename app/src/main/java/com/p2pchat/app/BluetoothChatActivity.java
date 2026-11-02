@@ -404,23 +404,23 @@ public class BluetoothChatActivity extends AppCompatActivity {
     private void downloadRoutingForBbox(final double west, final double south,
                                         final double east, final double north) {
         new Thread(() -> {
-            String url = "https://overpass-api.de/api/map?bbox="
-                    + west + "," + south + "," + east + "," + north;
-            java.io.File osm = routingOsmFile();
-            mainHandler.post(() -> {
-                if (mapStatus != null) mapStatus.setText("Downloading road data for offline routing…");
-            });
-            boolean ok = downloadFile(url, osm);
-            if (!ok || osm.length() == 0) {
-                mainHandler.post(() -> {
-                    if (mapStatus != null) mapStatus.setText("Map tiles downloading; road data failed (try a smaller area).");
-                });
-                return;
-            }
-            mainHandler.post(() -> {
-                if (mapStatus != null) mapStatus.setText("Preparing offline routing…");
-            });
             try {
+                String url = "https://overpass-api.de/api/map?bbox="
+                        + west + "," + south + "," + east + "," + north;
+                java.io.File osm = routingOsmFile();
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Downloading road data for offline routing…");
+                });
+                boolean ok = downloadFile(url, osm);
+                if (!ok || osm.length() == 0) {
+                    mainHandler.post(() -> {
+                        if (mapStatus != null) mapStatus.setText("Road data download failed (try a smaller area or check connection).");
+                    });
+                    return;
+                }
+                mainHandler.post(() -> {
+                    if (mapStatus != null) mapStatus.setText("Preparing offline routing… (this can take a while)");
+                });
                 java.io.File graph = routingGraphFolder();
                 deleteRecursively(graph);
                 offlineRouter.loadOrImport(osm.getAbsolutePath(), graph.getAbsolutePath());
@@ -428,9 +428,11 @@ public class BluetoothChatActivity extends AppCompatActivity {
                     if (mapStatus != null) mapStatus.setText("Area ready — map + offline routing available.");
                 });
             } catch (Throwable t) {
+                // Never let routing preparation crash the app.
                 Log.e(TAG, "Routing prep failed", t);
+                final String msg = (t.getMessage() != null) ? t.getMessage() : t.getClass().getSimpleName();
                 mainHandler.post(() -> {
-                    if (mapStatus != null) mapStatus.setText("Routing prep failed: " + t.getMessage());
+                    if (mapStatus != null) mapStatus.setText("Routing prep failed: " + msg);
                 });
             }
         }).start();
@@ -753,56 +755,64 @@ public class BluetoothChatActivity extends AppCompatActivity {
     
     // Cache a ~3 km radius around your location (or map center) for offline use.
     private void downloadCurrentArea() {
-        if (map == null) {
-            return;
+        try {
+            if (map == null) {
+                return;
+            }
+            // Center on GPS if available, otherwise the current map center.
+            double centerLat, centerLon;
+            android.location.Location my = hasLocationPermission() ? getLastKnownLocation() : null;
+            if (my != null) {
+                centerLat = my.getLatitude();
+                centerLon = my.getLongitude();
+            } else {
+                org.osmdroid.api.IGeoPoint c = map.getMapCenter();
+                centerLat = c.getLatitude();
+                centerLon = c.getLongitude();
+            }
+            
+            // Convert a 3 km radius into a lat/lon bounding box.
+            double dLat = DOWNLOAD_RADIUS_KM / 111.0;
+            double dLon = DOWNLOAD_RADIUS_KM / (111.0 * Math.max(0.01, Math.cos(Math.toRadians(centerLat))));
+            BoundingBox bb = new BoundingBox(centerLat + dLat, centerLon + dLon,
+                    centerLat - dLat, centerLon - dLon);
+            
+            // Also fetch the road network for the same area so offline routing matches the map.
+            downloadRoutingForBbox(centerLon - dLon, centerLat - dLat, centerLon + dLon, centerLat + dLat);
+            
+            final int zoomMin = 13;   // street-level detail range useful for navigation
+            final int zoomMax = 17;
+            
+            CacheManager cacheManager = new CacheManager(map);
+            cacheManager.downloadAreaAsync(this, bb, zoomMin, zoomMax, new CacheManager.CacheManagerCallback() {
+                @Override
+                public void onTaskComplete() {
+                    if (mapStatus != null) mapStatus.setText("Map tiles downloaded.");
+                }
+                @Override
+                public void onTaskFailed(int errors) {
+                    if (mapStatus != null) mapStatus.setText("Tile download finished with " + errors + " errors.");
+                }
+                @Override
+                public void updateProgress(int progress, int currentZoomLevel, int zoomMin2, int zoomMax2) {
+                    if (mapStatus != null) mapStatus.setText("Downloading tiles… " + progress + "%");
+                }
+                @Override
+                public void downloadStarted() {
+                    if (mapStatus != null) mapStatus.setText("Starting tile download…");
+                }
+                @Override
+                public void setPossibleTilesInArea(int total) {
+                    if (mapStatus != null) mapStatus.setText("Downloading " + total + " tiles…");
+                }
+            });
+        } catch (Throwable t) {
+            Log.e(TAG, "Area download failed", t);
+            if (mapStatus != null) {
+                mapStatus.setText("Download error: " + t.getMessage());
+            }
+            Toast.makeText(this, "Download failed: " + t.getMessage(), Toast.LENGTH_LONG).show();
         }
-        // Center on GPS if available, otherwise the current map center.
-        double centerLat, centerLon;
-        android.location.Location my = hasLocationPermission() ? getLastKnownLocation() : null;
-        if (my != null) {
-            centerLat = my.getLatitude();
-            centerLon = my.getLongitude();
-        } else {
-            org.osmdroid.api.IGeoPoint c = map.getMapCenter();
-            centerLat = c.getLatitude();
-            centerLon = c.getLongitude();
-        }
-        
-        // Convert a 3 km radius into a lat/lon bounding box.
-        double dLat = DOWNLOAD_RADIUS_KM / 111.0;
-        double dLon = DOWNLOAD_RADIUS_KM / (111.0 * Math.max(0.01, Math.cos(Math.toRadians(centerLat))));
-        BoundingBox bb = new BoundingBox(centerLat + dLat, centerLon + dLon,
-                centerLat - dLat, centerLon - dLon);
-        
-        // Also fetch the road network for the same area so offline routing matches the map.
-        downloadRoutingForBbox(centerLon - dLon, centerLat - dLat, centerLon + dLon, centerLat + dLat);
-        
-        final int zoomMin = 13;   // street-level detail range useful for navigation
-        final int zoomMax = 17;
-        
-        CacheManager cacheManager = new CacheManager(map);
-        cacheManager.downloadAreaAsync(this, bb, zoomMin, zoomMax, new CacheManager.CacheManagerCallback() {
-            @Override
-            public void onTaskComplete() {
-                if (mapStatus != null) mapStatus.setText("Area downloaded — available offline.");
-            }
-            @Override
-            public void onTaskFailed(int errors) {
-                if (mapStatus != null) mapStatus.setText("Download finished with " + errors + " errors.");
-            }
-            @Override
-            public void updateProgress(int progress, int currentZoomLevel, int zoomMin2, int zoomMax2) {
-                if (mapStatus != null) mapStatus.setText("Downloading… " + progress + "%");
-            }
-            @Override
-            public void downloadStarted() {
-                if (mapStatus != null) mapStatus.setText("Starting download…");
-            }
-            @Override
-            public void setPossibleTilesInArea(int total) {
-                if (mapStatus != null) mapStatus.setText("Downloading " + total + " tiles…");
-            }
-        });
     }
     
     // Green dot when connected to a peer, red dot otherwise
@@ -2037,9 +2047,9 @@ public class BluetoothChatActivity extends AppCompatActivity {
                 // Show specific guidance based on Android version
                 String message;
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                    message = "Bluetooth permissions are required. Please go to Settings > Apps > P2P Chat > Permissions and enable Nearby devices.";
+                    message = "Bluetooth permissions are required. Please go to Settings > Apps > NINE > Permissions and enable Nearby devices.";
                 } else {
-                    message = "Location permission is required for Bluetooth discovery. Please go to Settings > Apps > P2P Chat > Permissions and enable Location.";
+                    message = "Location permission is required for Bluetooth discovery. Please go to Settings > Apps > NINE > Permissions and enable Location.";
                 }
                 
                 new AlertDialog.Builder(this)
