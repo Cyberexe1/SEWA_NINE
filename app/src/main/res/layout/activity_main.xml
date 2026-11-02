@@ -5,31 +5,18 @@
     android:orientation="vertical"
     android:gravity="center"
     android:padding="32dp"
-    android:background="@android:color/white">
+    android:background="@android:color/black">
 
     <ImageView
-        android:layout_width="120dp"
-        android:layout_height="120dp"
-        android:src="@android:drawable/stat_sys_data_bluetooth"
-        android:tint="#2196F3"
-        android:layout_marginBottom="24dp" />
-
-    <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="P2P Chat"
-        android:textSize="32sp"
-        android:textStyle="bold"
-        android:textColor="#2196F3"
-        android:layout_marginBottom="8dp" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Connect without internet"
-        android:textSize="16sp"
-        android:textColor="#757575"
-        android:layout_marginBottom="48dp" />
+        android:src="@drawable/startup_page"
+        android:adjustViewBounds="true"
+        android:maxWidth="280dp"
+        android:maxHeight="320dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="NINE"
+        android:layout_marginBottom="40dp" />
 
     <Button
         android:id="@+id/btn_bluetooth"
@@ -50,7 +37,7 @@
         android:layout_height="wrap_content"
         android:text="No internet required • Peer-to-peer connection"
         android:textSize="12sp"
-        android:textColor="#9E9E9E"
+        android:textColor="#BDBDBD"
         android:layout_marginTop="16dp"
         android:gravity="center" />
 

@@ -3,184 +3,401 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@android:color/white"
-    android:padding="0dp">
+    android:background="@android:color/white">
 
-    <!-- Header Section (compact, with connection status dot) -->
+    <!-- Top bar: app name + connection status dot -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@android:color/white"
+        android:background="#111111"
         android:elevation="4dp"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp">
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="NINE"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/white" />
 
         <TextView
             android:id="@+id/connection_indicator"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="●"
-            android:textSize="16sp"
+            android:textSize="18sp"
             android:textColor="#F44336"
-            android:layout_marginEnd="8dp"
+            android:layout_marginEnd="6dp"
             android:contentDescription="Connection status" />
 
         <TextView
-            android:id="@+id/username_display"
-            android:layout_width="0dp"
-            android:layout_weight="1"
+            android:id="@+id/tv_self_id"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="You: User"
-            android:textSize="15sp"
-            android:textStyle="bold"
-            android:textColor="#2E7D32" />
-
-        <ImageButton
-            android:id="@+id/btn_edit_username"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@android:drawable/ic_menu_edit"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Edit name"
-            android:padding="6dp"
-            android:tint="#2E7D32" />
-
-        <!-- Kept for status logic, hidden from UI -->
-        <TextView
-            android:id="@+id/status_text"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone"
-            android:text="Bluetooth Chat Ready" />
+            android:text="#----"
+            android:textSize="13sp"
+            android:textColor="#BDBDBD" />
     </LinearLayout>
 
-    <!-- Connect Button (single tap: listen + become discoverable + scan) -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="12dp"
-        android:background="@android:color/white"
-        android:elevation="2dp">
-
-        <Button
-            android:id="@+id/btn_connect"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:text="Connect"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:backgroundTint="#4CAF50"
-            android:textColor="@android:color/white" />
-    </LinearLayout>
-
-    <!-- Devices Section (expands to show found devices) -->
-    <LinearLayout
+    <!-- Content area: only one section is visible at a time -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:background="@android:color/white"
-        android:elevation="2dp">
+        android:layout_weight="1">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="📱 Available Devices"
-            android:textStyle="bold"
-            android:textSize="15sp"
-            android:textColor="#424242"
-            android:layout_marginBottom="6dp" />
-
-        <ListView
-            android:id="@+id/device_list"
+        <!-- ===================== CHAT SECTION ===================== -->
+        <LinearLayout
+            android:id="@+id/section_chat"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:background="#FAFAFA"
-            android:divider="#E0E0E0"
-            android:dividerHeight="1dp"
-            android:padding="4dp" />
-    </LinearLayout>
+            android:layout_height="match_parent"
+            android:orientation="vertical">
 
-    <!-- Messages Section (priority space, sits directly above the input) -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="2"
-        android:orientation="vertical"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
-        android:background="@android:color/white"
-        android:elevation="2dp">
+            <Button
+                android:id="@+id/btn_connect"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="Connect"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:backgroundTint="#4CAF50"
+                android:textColor="@android:color/white"
+                android:layout_margin="10dp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="💬 Messages"
-            android:textStyle="bold"
-            android:textSize="15sp"
-            android:textColor="#424242"
-            android:layout_marginBottom="6dp" />
+            <TextView
+                android:id="@+id/status_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Not connected"
+                android:textSize="13sp"
+                android:textColor="#1976D2"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="4dp" />
 
-        <ListView
-            android:id="@+id/message_list"
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🟢 People Online (tap to chat)"
+                android:textStyle="bold"
+                android:textSize="14sp"
+                android:textColor="#2E7D32"
+                android:paddingStart="12dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
+
+            <ListView
+                android:id="@+id/contacts_list"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="#F1F8E9"
+                android:divider="#E0E0E0"
+                android:dividerHeight="1dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:padding="4dp" />
+
+            <Button
+                android:id="@+id/btn_link_device"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="＋ Link a nearby device"
+                android:textSize="13sp"
+                android:backgroundTint="#2196F3"
+                android:textColor="@android:color/white"
+                android:layout_marginStart="10dp"
+                android:layout_marginTop="6dp" />
+
+            <TextView
+                android:id="@+id/message_header"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="💬 Messages (everyone)"
+                android:textStyle="bold"
+                android:textSize="14sp"
+                android:textColor="#424242"
+                android:paddingStart="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="4dp" />
+
+            <ListView
+                android:id="@+id/message_list"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="2"
+                android:background="#FFFFFF"
+                android:divider="#E0E0E0"
+                android:dividerHeight="1dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:padding="6dp"
+                android:transcriptMode="alwaysScroll"
+                android:stackFromBottom="true" />
+
+            <!-- Message input (dark, rounded) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:padding="8dp"
+                android:layout_margin="8dp"
+                android:background="@drawable/bg_input_bar">
+
+                <EditText
+                    android:id="@+id/message_input"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="Type your message..."
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp"
+                    android:background="@drawable/bg_input_field"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#9E9E9E"
+                    android:textSize="15sp"
+                    android:layout_marginEnd="8dp"
+                    android:minHeight="48dp"
+                    android:maxLines="3"
+                    android:inputType="textCapSentences|textMultiLine" />
+
+                <Button
+                    android:id="@+id/btn_send_message"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Send"
+                    android:textStyle="bold"
+                    android:backgroundTint="#4CAF50"
+                    android:textColor="@android:color/white"
+                    android:minWidth="76dp"
+                    android:minHeight="48dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ===================== RELAY SECTION ===================== -->
+        <LinearLayout
+            android:id="@+id/section_relay"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:background="#FFFFFF"
-            android:divider="#E0E0E0"
-            android:dividerHeight="1dp"
-            android:padding="8dp"
-            android:transcriptMode="alwaysScroll"
-            android:stackFromBottom="true" />
-    </LinearLayout>
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:padding="20dp"
+            android:visibility="gone">
 
-    <!-- Message Input Section (pinned above the keyboard) -->
-    <LinearLayout
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Relay Mode"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="#212121"
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Turn this on to let your phone forward messages between other people who are out of range. You don't need to type or read anything — just keep the app running."
+                android:textSize="14sp"
+                android:textColor="#616161"
+                android:gravity="center"
+                android:layout_marginBottom="24dp" />
+
+            <Button
+                android:id="@+id/btn_relay_mode"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:text="Start Relaying"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:backgroundTint="#FF9800"
+                android:textColor="@android:color/white" />
+
+            <TextView
+                android:id="@+id/relay_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Relay is off"
+                android:textSize="15sp"
+                android:textColor="#424242"
+                android:gravity="center"
+                android:layout_marginTop="24dp" />
+        </LinearLayout>
+
+        <!-- ===================== MAP SECTION ===================== -->
+        <LinearLayout
+            android:id="@+id/section_map"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <org.osmdroid.views.MapView
+                    android:id="@+id/map"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <ImageButton
+                    android:id="@+id/btn_place_pin"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="start|top"
+                    android:layout_margin="12dp"
+                    android:src="@android:drawable/ic_menu_myplaces"
+                    android:background="#FFFFFF"
+                    android:contentDescription="Drop a pin"
+                    android:elevation="4dp"
+                    android:padding="8dp" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/map_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Download your 3 km area for offline use. Long-press anywhere to get directions."
+                android:textSize="12sp"
+                android:textColor="#616161"
+                android:padding="10dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="8dp">
+
+                <Button
+                    android:id="@+id/btn_my_location"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="My Location"
+                    android:textSize="13sp"
+                    android:backgroundTint="#2196F3"
+                    android:textColor="@android:color/white"
+                    android:layout_marginEnd="6dp" />
+
+                <Button
+                    android:id="@+id/btn_download_area"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="Download area (map + routing)"
+                    android:textSize="12sp"
+                    android:backgroundTint="#4CAF50"
+                    android:textColor="@android:color/white"
+                    android:layout_marginStart="6dp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_download_routing"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Download offline routing data"
+                android:textSize="13sp"
+                android:backgroundTint="#9C27B0"
+                android:textColor="@android:color/white"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="8dp" />
+        </LinearLayout>
+
+        <!-- ===================== SETTINGS SECTION ===================== -->
+        <LinearLayout
+            android:id="@+id/section_settings"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="20dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Your Profile"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#212121"
+                android:layout_marginBottom="12dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="#F5F5F5"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/username_display"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="You: User"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#2E7D32" />
+
+                <ImageButton
+                    android:id="@+id/btn_edit_username"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@android:drawable/ic_menu_edit"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Edit name"
+                    android:padding="8dp"
+                    android:tint="#2E7D32" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/settings_device_id"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Device ID: —"
+                android:textSize="13sp"
+                android:textColor="#757575"
+                android:layout_marginTop="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="NINE • version 1.0.1"
+                android:textSize="13sp"
+                android:textColor="#9E9E9E"
+                android:layout_marginTop="24dp" />
+
+            <Button
+                android:id="@+id/btn_permissions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Check permissions"
+                android:textSize="13sp"
+                android:backgroundTint="#607D8B"
+                android:textColor="@android:color/white"
+                android:layout_marginTop="16dp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Bottom navigation: Chat / Relay / Settings -->
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/bottom_nav"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:background="#1E1E1E"
-        android:elevation="8dp">
-
-        <EditText
-            android:id="@+id/message_input"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="Type your message..."
-            android:padding="12dp"
-            android:background="#2C2C2C"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#9E9E9E"
-            android:textSize="15sp"
-            android:layout_marginEnd="8dp"
-            android:minHeight="48dp"
-            android:maxLines="3"
-            android:inputType="textCapSentences|textMultiLine" />
-
-        <Button
-            android:id="@+id/btn_send_message"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Send"
-            android:textStyle="bold"
-            android:backgroundTint="#4CAF50"
-            android:textColor="@android:color/white"
-            android:minWidth="80dp"
-            android:minHeight="48dp" />
-    </LinearLayout>
+        android:background="@android:color/white"
+        app:menu="@menu/bottom_nav_menu"
+        xmlns:app="http://schemas.android.com/apk/res-auto" />
 
 </LinearLayout>
