@@ -1,0 +1,5 @@
+nodes,broadcast_latency_ms,secure_latency_ms,throughput_msgs_per_sec,delivery_rate
+5,16.733,39.473,1677.4,1.000
+10,13.949,33.717,1065.0,1.000
+20,21.598,31.427,1402.6,1.000
+50,17.936,26.737,747.1,1.000

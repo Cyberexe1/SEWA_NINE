@@ -1,0 +1,41 @@
+{
+  "name": "nine-protocol",
+  "version": "0.1.0",
+  "description": "NINE - Adaptive Secure Communication System for Reliable Network-less Connectivity",
+  "main": "core/shared/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "lint": "eslint core/ gateway/ --ext .ts",
+    "clean": "rimraf dist",
+    "demo": "tsx examples/runner.ts"
+  },
+  "keywords": [
+    "mesh-networking",
+    "p2p",
+    "offline-communication",
+    "protocol",
+    "encryption",
+    "disaster-response"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "eslint": "^9.0.0",
+    "rimraf": "^6.0.0",
+    "ts-node": "^10.9.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "better-sqlite3": "^11.0.0",
+    "uuid": "^10.0.0"
+  }
+}

@@ -1,0 +1,10 @@
+[
+  {
+    "t": 0,
+    "event": "broadcast_delivered",
+    "detail": {
+      "message": "authenticate transaction 4471",
+      "count": 1
+    }
+  }
+]

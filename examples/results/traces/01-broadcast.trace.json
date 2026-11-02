@@ -1,0 +1,60 @@
+[
+  {
+    "t": 0,
+    "event": "topology",
+    "detail": {
+      "type": "star",
+      "center": "Alpha",
+      "nodes": 5
+    }
+  },
+  {
+    "t": 1,
+    "event": "broadcast_sent",
+    "detail": {
+      "from": "Alpha",
+      "message": "EMERGENCY: Building evacuation in progress",
+      "emergency": true
+    }
+  },
+  {
+    "t": 2,
+    "event": "broadcast_received",
+    "detail": {
+      "at": "Bravo",
+      "from": "00000001-aaaa-4bbb-8ccc-dddddddddddd",
+      "message": "EMERGENCY: Building evacuation in progress",
+      "hops": 0
+    }
+  },
+  {
+    "t": 3,
+    "event": "broadcast_received",
+    "detail": {
+      "at": "Charlie",
+      "from": "00000001-aaaa-4bbb-8ccc-dddddddddddd",
+      "message": "EMERGENCY: Building evacuation in progress",
+      "hops": 0
+    }
+  },
+  {
+    "t": 4,
+    "event": "broadcast_received",
+    "detail": {
+      "at": "Delta",
+      "from": "00000001-aaaa-4bbb-8ccc-dddddddddddd",
+      "message": "EMERGENCY: Building evacuation in progress",
+      "hops": 0
+    }
+  },
+  {
+    "t": 5,
+    "event": "broadcast_received",
+    "detail": {
+      "at": "Admin",
+      "from": "00000001-aaaa-4bbb-8ccc-dddddddddddd",
+      "message": "EMERGENCY: Building evacuation in progress",
+      "hops": 0
+    }
+  }
+]

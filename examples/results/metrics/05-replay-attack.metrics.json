@@ -1,0 +1,36 @@
+{
+  "routing": {
+    "routesCreated": 0,
+    "routesInvalidated": 0,
+    "packetsForwarded": 1,
+    "packetsDropped": 0,
+    "duplicatesDetected": 5,
+    "ttlExpired": 0,
+    "routeDiscoveries": 0,
+    "routeRepliesSent": 0,
+    "routeErrorsSent": 0,
+    "acksSent": 0,
+    "acksReceived": 0,
+    "pendingQueueSize": 0
+  },
+  "dualPath": {
+    "messagesSent": 0,
+    "messagesDelivered": 0,
+    "messagesTimedOut": 0,
+    "duplicatesSuppressed": 0,
+    "averageReconstructionMs": 0,
+    "dualPathUsed": 0,
+    "singlePathFallback": 0
+  },
+  "transport": {
+    "bytesSent": 0,
+    "bytesReceived": 103,
+    "packetsSent": 0,
+    "packetsReceived": 1
+  },
+  "node": {
+    "neighborCount": 1,
+    "knownNodeCount": 0,
+    "routeCount": 0
+  }
+}

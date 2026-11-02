@@ -1,0 +1,8 @@
+{
+  "example": "04-relay-failure",
+  "deliveredBeforeFailure": 1,
+  "deliveredAfterFailure": 0,
+  "relayDemonstrated": true,
+  "failureIsolated": true,
+  "success": true
+}

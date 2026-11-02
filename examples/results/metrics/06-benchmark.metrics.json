@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "nodes": 5,
+      "broadcastLatencyMs": 16.732700000000023,
+      "secureLatencyMs": 39.472899999999754,
+      "throughputMsgsPerSec": 1677.4442459468778,
+      "deliveryRate": 1
+    },
+    {
+      "nodes": 10,
+      "broadcastLatencyMs": 13.948699999999917,
+      "secureLatencyMs": 33.7166000000002,
+      "throughputMsgsPerSec": 1064.983141316872,
+      "deliveryRate": 1
+    },
+    {
+      "nodes": 20,
+      "broadcastLatencyMs": 21.597799999999552,
+      "secureLatencyMs": 31.427200000000084,
+      "throughputMsgsPerSec": 1402.561919602346,
+      "deliveryRate": 1
+    },
+    {
+      "nodes": 50,
+      "broadcastLatencyMs": 17.935599999999795,
+      "secureLatencyMs": 26.737099999999373,
+      "throughputMsgsPerSec": 747.0675730090472,
+      "deliveryRate": 1
+    }
+  ]
+}

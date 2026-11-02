@@ -1,23 +1,37 @@
-# Gradle
+# --- Android ---
 .gradle/
 build/
 app/build/
-
-# Android Studio / IntelliJ
 .idea/
 *.iml
-.DS_Store
-
-# Local configuration
 local.properties
-
-# Log files
-*.log
-
-# Keystore files
+*.apk
+*.aab
 *.jks
 *.keystore
 
-# APK / output files
-*.apk
-*.aab
+# --- Node.js ---
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- Database ---
+*.db
+*.sqlite
+
+# --- Environment ---
+.env
+.env.local
+.env.production
+
+# --- Logs ---
+*.log
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/settings.json
+*.swp
+*.swo

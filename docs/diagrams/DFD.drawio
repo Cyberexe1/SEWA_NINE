@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NINE Data Flow Diagram - Open with draw.io / diagrams.net -->
+<!-- TODO: Create DFD showing data flow between modules -->
+<mxfile>
+  <diagram name="NINE DFD">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

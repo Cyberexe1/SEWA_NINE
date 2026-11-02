@@ -1,0 +1,59 @@
+/**
+ * NINE Protocol - Configuration Constants
+ *
+ * All tunable protocol parameters. Values match /docs/ specifications.
+ * Change here → changes everywhere.
+ */
+
+export const PROTOCOL = {
+  VERSION: 1,
+  MAX_PACKET_SIZE: 4096,
+  HEADER_SIZE: 66,
+  SIGNATURE_SIZE: 64,
+  FRAME_MAGIC: 0x4e39,
+  FRAME_MAGIC_END: 0x394e,
+  MAX_FRAME_SIZE: 8192,
+} as const;
+
+export const TTL = {
+  BROADCAST: 10,
+  ROUTED: 20,
+  MAX: 255,
+} as const;
+
+export const TIMING = {
+  HEARTBEAT_INTERVAL_MS: 5000,
+  HEARTBEAT_TIMEOUT_MS: 15000,
+  DEDUP_EXPIRY_MS: 60000,
+  ROUTE_REQUEST_TIMEOUT_MS: 10000,
+  RETRY_INTERVAL_MS: 3000,
+  ROUTE_EXPIRY_MS: 30000,
+  PENDING_PACKET_TIMEOUT_MS: 30000,
+  FRAME_TIMEOUT_MS: 5000,
+  DISCOVERY_INTERVAL_MS: 10000,
+  DISCOVERABLE_DURATION_MS: 30000,
+  MAX_PACKET_AGE_MS: 60000,
+} as const;
+
+export const LIMITS = {
+  DEDUP_BUFFER_SIZE: 1024,
+  MAX_RETRIES: 3,
+  MAX_HOP_LIST_SIZE: 20,
+  SEND_QUEUE_SIZE: 128,
+  MAX_PENDING_QUEUE_SIZE: 64,
+  SEND_RETRY_COUNT: 1,
+  MAX_ROUTE_DISCOVERY_RETRIES: 3,
+} as const;
+
+export const SECURITY = {
+  AES_KEY_SIZE: 32,
+  AES_GCM_IV_SIZE: 12,
+  AES_CBC_IV_SIZE: 16,
+  AES_GCM_TAG_SIZE: 16,
+  RSA_KEY_SIZE: 2048,
+  HASH_SIZE: 32,
+} as const;
+
+export const TRANSPORT = {
+  MIN_LINK_QUALITY: 0.3,
+} as const;

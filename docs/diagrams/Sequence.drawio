@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NINE Sequence Diagrams - Open with draw.io / diagrams.net -->
+<!-- TODO: Create sequence diagrams for Discovery, Broadcast, Secure Message, Route Discovery -->
+<mxfile>
+  <diagram name="NINE Sequences">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

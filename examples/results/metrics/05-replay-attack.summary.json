@@ -1,0 +1,9 @@
+{
+  "example": "05-replay-attack",
+  "legitimateDeliveries": 1,
+  "replaysAttempted": 5,
+  "deliveriesAfterReplay": 1,
+  "duplicatesDetected": 5,
+  "replaySuppressed": true,
+  "success": true
+}
