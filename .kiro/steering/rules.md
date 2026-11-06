@@ -36,7 +36,7 @@ When analyzing proposals:
 
    * State the assumption
    * Explain why it fails
-   * Provide evidence or benchmarks
+* Provide evidence or benchmarks                      
 
 2. **Logical Fallacies**
 

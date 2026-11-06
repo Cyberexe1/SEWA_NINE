@@ -333,7 +333,7 @@ Bob, Carol, and Dave forwarded ciphertext and never read "hi".
 Incremental steps on top of `BluetoothChatActivity` (status marked):
 
 1. [x] **Identity**: generate and persist `deviceId` (UUID) + editable `name`.
-2. [x] **Packet layer**: `Packet` model + length-prefixed JSON framing replacing raw strings.
+2. [x] **Packet layer**: `Packet` model + length-prefixed JSON framing replacing r  aw strings.
 3. [x] **Multi-neighbor manager**: `NeighborManager` holding `deviceId → link` with a read loop per link and duplicate-link resolution.
 4. [x] **Auto-connect / auto-accept**: continuous accept loop + periodic scan-and-connect (in Relay Mode), with link deduplication.
 5. [x] **Presence**: timer-based PRESENCE emit + rebroadcast + contact list with online/offline timeouts.
