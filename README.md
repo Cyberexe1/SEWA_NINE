@@ -1,320 +1,360 @@
-# NINE — Offline Bluetooth Chat with Multi-Hop Relay
+<div align="center">
 
-NINE is an Android messaging app that lets people chat **without internet, Wi-Fi, or cellular service**. Devices talk directly to each other over Bluetooth. To reach people who are too far away for a direct connection, NINE uses a **multi-hop relay mesh**: other phones running NINE quietly pass messages along, extending the effective range across several devices.
+<img src="assets/logo/nine-logo.jpeg" alt="NINE logo" width="200"/>
+
+# NINE — No Network Infrastructure Exchange
+
+**Communicate when every network is down.**
+An infrastructure-free mesh that lets phones — and desktops — talk over Bluetooth with **no internet, no cell tower, no Wi‑Fi, no SIM, and no server.**
+
+<!-- badges -->
+![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-1e5a9e)
+![Transport](https://img.shields.io/badge/transport-Bluetooth%20RFCOMM%20%2B%20BLE-2f7dff)
+![Crypto](https://img.shields.io/badge/crypto-RSA--2048%20%2B%20AES--256--GCM-2e7d32)
+![Offline](https://img.shields.io/badge/internet-not%20required-success)
+![License](https://img.shields.io/badge/license-MIT-black)
+
+</div>
 
 ---
 
 ## Table of Contents
 
-1. [What NINE Does](#what-nine-does)
-2. [Current Features](#current-features)
-3. [The Range Problem](#the-range-problem)
-4. [The Solution: Multi-Hop Relay Mesh](#the-solution-multi-hop-relay-mesh)
-5. [How Devices Connect](#how-devices-connect)
-6. [Relay Mode (Hands-Off Forwarding)](#relay-mode-hands-off-forwarding)
-7. [Message Format and Routing](#message-format-and-routing)
-8. [Privacy and Encryption](#privacy-and-encryption)
-9. [Example: 5-Device Chain](#example-5-device-chain)
-10. [Requirements](#requirements)
-11. [Build and Install](#build-and-install)
-12. [Usage](#usage)
-13. [Permissions](#permissions)
-14. [Technical Details](#technical-details)
-15. [Troubleshooting](#troubleshooting)
-16. [Project Structure](#project-structure)
-17. [Roadmap](#roadmap)
+- [Why NINE](#why-nine)
+- [What NINE is](#what-nine-is)
+- [System at a glance](#system-at-a-glance)
+- [Architecture](#architecture)
+- [How a message travels](#how-a-message-travels)
+- [The range problem & the relay solution](#the-range-problem--the-relay-solution)
+- [Connectionless BLE alerts](#connectionless-ble-alerts)
+- [Packet & beacon formats](#packet--beacon-formats)
+- [Security model](#security-model)
+- [Components](#components)
+- [Build & run](#build--run)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Roadmap](#roadmap)
+- [Team & license](#team--license)
 
 ---
 
-## What NINE Does
+## Why NINE
 
-NINE creates a local, off-grid chat network between Android phones. It is useful when there is no infrastructure — festivals, remote areas, disaster zones, or anywhere the internet is unavailable or untrusted. Communication happens entirely over Bluetooth radio between nearby devices.
+When a flood, earthquake, or cyclone knocks out towers and backhaul — or when a festival crowd overloads the cell network, or you're simply off-grid in the mountains — ordinary messaging stops working. **People become isolated at the exact moment they most need to reach one another.**
 
----
-
-## Current Features
-
-These are implemented today:
-
-- **One-tap Connect**: A single **Connect** button starts listening, becomes discoverable, and scans for peers all at once.
-- **Multi-hop relay mesh**: Messages hop across intermediate phones (controlled flooding with TTL + duplicate detection) to reach people who are out of direct Bluetooth range.
-- **Unique device identity**: Every install gets a permanent UUID (shown as a short `#XXXX` tag), so people with the same display name are never confused.
-- **People Online (mesh contacts)**: Presence announcements propagate through the mesh, so you can see and message people you're not directly connected to.
-- **Targeted, end-to-end encrypted messaging**: Pick a person and the message is encrypted (RSA + AES-GCM) so relays forward ciphertext they cannot read. A 🔒 marks encrypted messages.
-- **Delivery confirmation**: Addressed messages show "(sending…)", then "✓✓ delivered" or "✗ not delivered", with automatic retries.
-- **Relay Mode**: One button turns a phone into a hands-off forwarder (auto-connect, auto-accept, foreground service, live status).
-- **Offline map**: A Map tab (OpenStreetMap via osmdroid) shows your GPS position, lets you download your area for offline use, and plots mesh peers as pins from location shared over the mesh.
-- **Four-tab UI**: Chat / Relay / Map / Settings with a top-bar connection dot.
-- **Editable username** and **connection status dot**.
-- **Offline**: No internet, account, or server required (internet is used only to download map tiles for offline use).
+NINE turns the phones people already carry into a self-forming communication network. No infrastructure. No accounts. No central server. Just radios talking to radios, relaying for one another to cover distance.
 
 ---
 
-## The Range Problem
+## What NINE is
 
-Most phones use **Bluetooth Class 2**, which reaches roughly **10 meters** in practice, and less through walls or bodies. That means two people more than ~10 meters apart usually cannot connect directly.
+NINE is a **protocol first, apps second** — the same way TCP/IP is independent of the browser on top of it. One wire protocol is spoken by multiple clients:
 
-The goal is to let people chat across longer distances (for example ~30 meters or more) by placing other NINE devices in between to carry the messages forward.
+| Client | Platform | Role |
+|--------|----------|------|
+| **NINE mobile** | Android (Java) | The field device — chat, relay, offline map, SOS |
+| **NINE desktop** | Windows (Electron + React + TypeScript) | Full mesh client **and** a token-gated admin/monitoring dashboard |
+| **NINE core** | TypeScript | Reference protocol engine: packets, routing, crypto, transport, simulator |
+| **Bluetooth helper** | C# / WinRT | Gives the desktop real Windows RFCOMM + BLE radio access |
 
----
-
-## The Solution: Multi-Hop Relay Mesh
-
-NINE extends range by turning intermediate devices into **relays**. Instead of Sender → Receiver, messages travel:
-
-```
-Sender  →  Relay 1  →  Relay 2  →  Relay 3  →  Receiver
-```
-
-Each device only needs to reach its **immediate neighbor**. By chaining several devices, the network spans a distance far greater than any single Bluetooth link. With 4–5 devices you can cover a line of roughly 40–50 meters (about 10 meters per hop), or route around walls and obstacles.
-
-Key ideas:
-
-- **Every device is equal.** The same NINE app acts as sender, receiver, and relay. There is no special hardware or server.
-- **Neighbors only.** A device connects over Bluetooth only to devices within its own radio range. It does not — and cannot — directly connect to distant devices.
-- **App-level routing.** Messages are addressed to a person's **app ID**, not to a Bluetooth address. Relays forward each message toward its destination based on that ID.
+Everything is **offline by design** — the internet is used only (optionally) to pre-download map tiles.
 
 ---
 
-## How Devices Connect
+## System at a glance
 
-There are two separate concepts, and it is important to keep them apart:
-
-**1. Nearby Bluetooth devices (physical neighbors)**
-Bluetooth scanning can only see devices in direct radio range. If the sender and receiver are far apart, they will **not** appear in each other's scan lists. Each device only sees the relays physically near it. This is expected — it is the whole reason relays exist.
-
-**2. People online (mesh contacts)**
-To know who is reachable across the entire mesh, each device periodically broadcasts a small **presence announcement** ("I am Bob, ID xyz, online"). Neighbors rebroadcast it hop by hop, so the announcement spreads through the network. This builds an app-level contact list of everyone reachable — even people who are not direct Bluetooth neighbors.
-
-So, when you want to message someone far away, you pick them from the **people-online list** (learned through the mesh), not from the raw Bluetooth device list. The message is then routed to them through the relays.
-
----
-
-## Relay Mode (Hands-Off Forwarding)
-
-A person in the middle should not have to do any work. NINE provides a single **Relay Mode** button. Once tapped, the device becomes a passive forwarding node:
-
-- turns on discoverability and starts listening,
-- automatically accepts connections from nearby NINE devices,
-- automatically connects to other nearby NINE devices it discovers,
-- forwards every message it receives toward the destination.
-
-The relay user does not type, read, or select anything. The screen simply shows a status like "Relaying… X messages passed."
-
-**What the relay user must do (the practical minimum):**
-
-1. Tap **Relay Mode** once.
-2. Tap **Allow** on Android's discoverable system prompt (a security requirement no app can bypass — one tap).
-3. Stay physically positioned between the endpoints.
-4. Keep NINE running. A **foreground service** (a small persistent notification) keeps the relay alive so the phone can be locked or pocketed while forwarding continues.
-
-After that, forwarding is fully automatic.
-
----
-
-## Message Format and Routing
-
-Every message is wrapped in an envelope so relays know what to do with it:
-
-| Field | Purpose |
-|-------|---------|
-| `messageId` | Unique ID, used to detect and drop duplicates |
-| `sourceId` | App ID of the original sender |
-| `destId` | App ID of the intended recipient |
-| `ttl` | Hop limit; decremented at each relay, dropped at 0 |
-| `payload` | The (encrypted) message content |
-
-**Forwarding logic (controlled flooding):**
-
-1. A device receives a message.
-2. If it has already seen `messageId`, it drops it (prevents loops and broadcast storms).
-3. If `destId` is this device, it delivers the message to the user.
-4. Otherwise, it decrements `ttl`. If `ttl > 0`, it rebroadcasts the message to its other neighbors.
-
-The `ttl` (for example, start at 5) guarantees a message cannot bounce around the network forever, which is important with 4–5 devices where loops are possible.
-
----
-
-## Privacy and Encryption
-
-The relay person carries messages but must not be able to read them:
-
-- **End-to-end encryption**: The sender encrypts the message with the recipient's public key before it leaves. Only the recipient can decrypt it. Relays forward **ciphertext** they cannot read.
-- **Blind forwarding**: A relay only needs the `destId` to route. It does not need to know who the users are personally.
-- **Identity by ID, not name**: Each install generates a stable unique ID (UUID). Display names are only for showing to humans; routing uses the ID, so two people with the same name never get confused.
-
-Relays can still see routing metadata (source/destination IDs). Hiding that too would require onion-style routing, which is out of scope for now.
-
----
-
-## Example: 5-Device Chain
-
-Suppose Alice wants to message Eve, and they are ~40 meters apart with three friends in between:
-
-```
-Alice (sender)
-  └── 10 m ──► Bob (relay)
-                 └── 10 m ──► Carol (relay)
-                                └── 10 m ──► Dave (relay)
-                                               └── 10 m ──► Eve (receiver)
+```mermaid
+flowchart LR
+  subgraph FIELD["Off-grid mesh (Bluetooth)"]
+    A["📱 Phone A<br/>(sender)"]
+    B["📱 Phone B<br/>(relay)"]
+    C["📱 Phone C<br/>(recipient)"]
+    L["💻 Desktop<br/>(client + admin)"]
+  end
+  A <-->|RFCOMM| B
+  B <-->|RFCOMM| C
+  L <-->|RFCOMM| B
+  A -. "BLE alert (connectionless)" .-> C
+  classDef p fill:#142b4a,stroke:#2f7dff,color:#eaf0fa;
+  classDef d fill:#0f3b63,stroke:#3ee0e0,color:#eaf0fa;
+  class A,B,C p;
+  class L d;
 ```
 
-1. Bob, Carol, and Dave each open NINE and tap **Relay Mode** (then **Allow**). They do nothing else.
-2. Each device connects only to its immediate neighbors over Bluetooth.
-3. Presence announcements flood the chain, so Alice's app lists **Eve** as online even though Eve is not a Bluetooth neighbor.
-4. Alice selects Eve and sends an encrypted message addressed to Eve's ID.
-5. The message hops Alice → Bob → Carol → Dave → Eve. Each relay forwards blindly and cannot read it.
-6. Eve receives the message and sees it is from Alice.
-
-Neither Alice nor Eve ever sees the other in their raw Bluetooth scan — only the relays they are physically near.
+A message from **A** can reach **C** even when they're out of direct Bluetooth range — **B relays it**. Short emergency alerts can also ripple outward as connectionless BLE advertisements that need no pairing at all.
 
 ---
 
-## Requirements
+## Architecture
 
-- Android 6.0 (API 23) or higher
-- Bluetooth hardware
-- 2 devices for direct chat; 3 or more for relay testing (4–5 recommended to demonstrate multi-hop)
+NINE is layered so each layer is independently replaceable (a new transport or a new client doesn't touch the protocol).
 
----
+```mermaid
+flowchart TB
+  subgraph PRES["PRESENTATION — clients"]
+    direction LR
+    P1["Android app<br/>Chat · Relay · Map · Settings"]
+    P2["Desktop Electron + React<br/>client + Admin dashboard"]
+  end
+  subgraph PROTO["PROTOCOL / APPLICATION"]
+    direction LR
+    Q1["Packet model<br/>& framing"]
+    Q2["Routing &<br/>controlled flooding"]
+    Q3["Crypto<br/>RSA-2048 + AES-256-GCM"]
+    Q4["Seen-set dedup ·<br/>ACK / retry · presence"]
+  end
+  subgraph TRANS["TRANSPORT"]
+    direction LR
+    T1["Pluggable transport<br/>interface"]
+    T2["Bluetooth RFCOMM<br/>links"]
+    T3["BLE advertise /<br/>scan beacons"]
+    T4["Neighbour registry ·<br/>accept loop · discovery"]
+  end
+  subgraph HW["HARDWARE-ASSIST (optional)"]
+    H1["ESP32 + LoRa bridge<br/>over Bluetooth / USB"]
+  end
+  PRES --> PROTO --> TRANS --> HW
+  classDef pres fill:#1e5a9e,stroke:#3ee0e0,color:#eaf0fa;
+  classDef proto fill:#142b4a,stroke:#2f7dff,color:#eaf0fa;
+  classDef trans fill:#0f3b63,stroke:#2f7dff,color:#eaf0fa;
+  classDef hw fill:#2e7d32,stroke:#54c268,color:#eaf0fa;
+  class P1,P2 pres;
+  class Q1,Q2,Q3,Q4 proto;
+  class T1,T2,T3,T4 trans;
+  class H1 hw;
+```
 
-## Build and Install
-
-1. Build the debug APK:
-   ```bash
-   gradlew assembleDebug
-   ```
-2. Install on each device:
-   ```
-   app/build/outputs/apk/debug/app-debug.apk
-   ```
-3. Grant all requested permissions on first launch.
-
----
-
-## Usage
-
-### Direct chat (2 devices in range)
-1. On both devices, open NINE and tap **Connect**.
-2. Tap **Allow** on the discoverable prompt.
-3. Each device lists the other under Available Devices; tap it to connect.
-4. Start chatting.
-
-### Relayed chat (3–5 devices) — *planned*
-1. On the middle devices, open NINE and tap **Relay Mode**, then **Allow**.
-2. Place the relay devices between the two endpoints, within ~10 meters of each neighbor.
-3. On the sender, pick the recipient from the people-online list and send.
-
----
-
-## Offline Map & Location Sharing
-
-The **Map** tab uses OpenStreetMap (via the osmdroid library):
-
-- **My Location** centers the map on your GPS position. GPS works fully offline — it needs no internet or cell signal.
-- **Download this area** caches the tiles currently in view (across a few zoom levels) so that area works with no connection afterward. The map data download itself needs internet once; after that it is used offline.
-- **Peer pins**: each device shares its GPS position through the mesh as a `LOCATION` packet (same flooding + TTL as everything else). Other devices plot those peers as pins, so you can see where people are — even ones several relay hops away — without any internet.
-
-Note on tiles: the built-in "Download this area" uses OpenStreetMap's public tile server, whose policy discourages bulk downloading. For a production release, point it at a proper tile provider (MapTiler, Mapbox) or self-hosted tiles.
-
-## Permissions
-
-**Android 12+**
-- Bluetooth Connect, Scan, Advertise
-- Location (for showing your position on the map)
-
-**Android 10–11**
-- Location (required by Android for Bluetooth discovery, and for the map)
-
-**All versions**
-- Internet + Network State — used only to download map tiles for offline use
-- Foreground Service (Connected Device) — keeps Relay Mode alive in the background
-- Post Notifications — for the Relay Mode notification (Android 13+)
+> Deep dive: [`docs/Architecture.md`](docs/Architecture.md) · [`docs/android.md`](docs/android.md) · [`docs/SDK.md`](docs/SDK.md)
 
 ---
 
-## Technical Details
+## How a message travels
 
-- **Language**: Java
-- **Min SDK**: 23 (Android 6.0)
-- **Target SDK**: 34 (Android 14)
-- **App version**: 1.0.1
-- **Transport**: Classic Bluetooth over RFCOMM sockets
-- **Direct link**: client-server socket model (one device listens, the other connects)
-- **Mesh (planned)**: controlled flooding with message IDs, TTL-based hop limits, presence propagation, and end-to-end encryption
+Every device is equal — it can send, receive, **and** relay at the same time. A targeted message is encrypted end-to-end, so relays only ever carry ciphertext they cannot read.
 
----
+```mermaid
+sequenceDiagram
+  participant A as Phone A (sender)
+  participant B as Phone B (relay)
+  participant C as Phone C (recipient)
+  A->>B: HELLO (identity) + PRESENCE
+  B->>C: PRESENCE floods onward
+  Note over A,C: A now sees C as reachable (2 hops away)
+  A->>B: MSG — encrypted for C, TTL=5
+  Note over B: not for me · not seen before<br/>TTL 5→4 · forward (split-horizon)
+  B->>C: MSG (TTL=4)
+  Note over C: destination → decrypt 🔒 & show
+  C-->>B: ACK (delivered)
+  B-->>A: ACK floods back → "✓✓ delivered"
+```
 
-## Troubleshooting
+**The forwarding rule (controlled flooding):** on receiving a packet a node (1) drops it if the `msgId` is already in its **seen-set**, (2) delivers it if it's the destination, else (3) decrements **TTL** and re-broadcasts to its other neighbours — so loops and broadcast storms can't happen.
 
-**Devices not showing up?**
-- Grant all permissions in Settings → Apps → NINE.
-- Make sure both devices tapped **Connect** and allowed discoverability.
-- Keep devices within ~10 meters for each hop.
-- Allow up to ~30 seconds for Bluetooth discovery.
-
-**Connection drops or app stops relaying?**
-- Disable battery optimization for NINE.
-- Keep the app in the foreground, or use Relay Mode's persistent notification.
-- Restart Bluetooth on both devices.
-
-**Messages not reaching a far device?**
-- Confirm every relay in the chain is in Relay Mode and within range of its neighbors.
-- Check that no gap between two devices exceeds Bluetooth range.
+> Deep dive: [`docs/Routing.md`](docs/Routing.md) · [`Relay.md`](Relay.md)
 
 ---
 
-## Project Structure
+## The range problem & the relay solution
+
+A single Bluetooth Class‑2 link reaches only **~10 m**, and less through walls. NINE beats this by chaining relays: each device only needs to reach its **immediate neighbour**, and distance scales with the number of hops.
+
+```mermaid
+flowchart LR
+  A(("A")) ---|~10 m| B(("B")) ---|~10 m| C(("C")) ---|~10 m| D(("D")) ---|~10 m| E(("E"))
+  note["Direct link ≈ 10 m  →  4 relays ≈ 40–50 m end-to-end"]
+  classDef n fill:#eef5ff,stroke:#2f7dff,color:#1e5a9e;
+  class note n;
+```
+
+A **Relay Mode** turns a phone into a hands-off forwarder (auto-accept, auto-connect, foreground service) with a single tap — place it between two endpoints and it quietly carries traffic.
+
+---
+
+## Connectionless BLE alerts
+
+Beyond connected chat, NINE can broadcast a short **emergency alert** over BLE advertisements — **no pairing, no connection**. Any nearby device running NINE hears it, and re-broadcasts it onward (hop-limited controlled flooding) so the alert ripples out for range.
+
+- **Capability-adaptive:** uses **BLE 5 Extended Advertising** when the radio supports it (measured 160–1650 bytes on our test devices), and falls back to legacy advertising otherwise.
+- **Hop-limited:** each alert carries a `msgId` + `TTL`; relays re-advertise with `TTL-1` after a small random jitter to avoid on-air collisions.
+- **Honest limits:** connectionless alerts are short, unencrypted, and fire-and-forget (no delivery receipt). They complement — never replace — the reliable, encrypted RFCOMM path.
+
+---
+
+## Packet & beacon formats
+
+NINE keeps **one byte-compatible wire format** across phone and desktop. Three layers are illustrated below.
+
+**1 · Binary packet — fixed 71-byte header (reference core engine)**
 
 ```
-app/src/main/
-├── java/com/p2pchat/app/
-│   ├── MainActivity.java              # Launch screen / entry point
-│   ├── BluetoothChatActivity.java     # Tabs, mesh logic, chat, map
-│   ├── Packet.java                    # Wire protocol (HELLO/PRESENCE/MSG/ACK/LOCATION)
-│   ├── Crypto.java                    # End-to-end encryption (RSA + AES-GCM)
-│   └── RelayService.java              # Foreground service for Relay Mode
-├── res/
-│   ├── layout/                        # UI layouts (tabs, dialogs, list items)
-│   ├── menu/                          # Bottom navigation menu
-│   ├── drawable/                      # Rounded input backgrounds
-│   ├── values/                        # strings, colors, themes
-│   └── mipmap-*/                      # App icons
-└── AndroidManifest.xml                # App configuration and permissions
+ 0        1        2        3                 19                35                51        55                 63   64   65        67        71
+ ┌────────┬────────┬────────┬─────────────────┬─────────────────┬─────────────────┬────────┬──────────────────┬────┬────┬─────────┬─────────┬─────────┐
+ │version │ type   │ flags  │ packetId (16B)  │ senderId (16B)  │ destId (16B)    │ seq 4B │ timestamp 8B     │TTL │hop │ payLen  │ CRC-32  │ payload │
+ └────────┴────────┴────────┴─────────────────┴─────────────────┴─────────────────┴────────┴──────────────────┴────┴────┴─────────┴─────────┴─────────┘
+                                                                                                        (+ optional 64-byte signature if SIGNED)
 ```
+
+**2 · Mesh packet (Android) — length-prefixed JSON frame**
+
+```
+┌─────────────┬───────────────────────────────────────────────────────────────┐
+│ 4-byte BE   │  { type, msgId, srcId, dstId, ttl, seq, name, pubKey,          │
+│ length      │    payload, lat, lon, timestamp }   ← UTF-8 JSON               │
+└─────────────┴───────────────────────────────────────────────────────────────┘
+```
+
+**3 · Encrypted payload (ENC1)**
+
+```
+ENC1 : base64(RSA-OAEP-wrapped AES key) : base64(12-byte IV) : base64(AES-256-GCM ciphertext ‖ tag)
+```
+
+**4 · BLE alert beacon (v2) — 16-byte header + body**
+
+```
+┌───┬────┬──────────┬──────┬───────┬────┬────────┬──────────────┐
+│ver│kind│ srcId8 8B│seq 2B│msgId 2B│ttl │ bodyLen│ body (≤130B) │
+└───┴────┴──────────┴──────┴───────┴────┴────────┴──────────────┘
+         (msgId + ttl drive controlled-flooding re-broadcast)
+```
+
+> Full spec: [`docs/PacketFormat.md`](docs/PacketFormat.md) · [`docs/NINE-PacketEncoding-v1.0.md`](docs/NINE-PacketEncoding-v1.0.md)
+
+---
+
+## Security model
+
+```mermaid
+flowchart LR
+  M["Plaintext message"] --> K["Generate one-time<br/>AES-256 session key"]
+  K --> E["AES-256-GCM encrypt<br/>→ ciphertext + IV + tag"]
+  K --> W["RSA-2048 OAEP wrap<br/>session key w/ recipient public key"]
+  E --> P["ENC1 payload"]
+  W --> P
+  P --> R["Relays forward<br/>ciphertext only 🔒"]
+  R --> D["Recipient unwraps key,<br/>verifies GCM tag, decrypts"]
+  classDef a fill:#142b4a,stroke:#2f7dff,color:#eaf0fa;
+  classDef g fill:#2e7d32,stroke:#54c268,color:#eaf0fa;
+  class M,K,E,W,P,R a;
+  class D g;
+```
+
+- **End-to-end:** only the intended recipient can decrypt. Relays route on IDs they can see, but the body is opaque to them.
+- **Integrity:** AES-GCM authentication tag + a CRC-32 on the binary packet.
+- **Identity:** every install generates a stable UUID; display names are cosmetic, routing uses the ID.
+- **Not hidden (v1):** routing metadata (who → whom) is visible to relays; onion-style metadata privacy is future work.
+
+> Deep dive: [`docs/Security.md`](docs/Security.md)
+
+---
+
+## Components
+
+### 📱 Android app (`app/`)
+Java, minSdk 23 / targetSdk 34. Chat · Relay · Map · Settings tabs. Bluetooth Classic RFCOMM mesh, BLE presence + alerts, end-to-end encryption, delivery ACKs, offline OpenStreetMap (osmdroid) with GPS peer pins, and offline routing (GraphHopper).
+
+### 💻 Desktop app (`admin/`)
+Electron + React + TypeScript. Acts as a **full mesh client** (send/receive/relay) and, behind an access token, an **admin dashboard** (live packet log, mesh topology, delivery metrics, node health). Talks to real Windows Bluetooth through a bundled **C# WinRT helper** (`admin/bthelper/`).
+
+### 🧩 Protocol core (`core/`)
+The reference TypeScript engine: `protocol/` (packet, serializer, parser, CRC-32), `routing/`, `security/` (RSA/AES), `transport/` (Bluetooth abstraction, mock + virtual), `messaging/` (dual-path), and a `simulator/` for repeatable mesh metrics.
+
+### 📡 Range bridge (optional)
+ESP32 + LoRa node bridged to a phone over Bluetooth/USB to extend reach where phone radios can't.
+
+---
+
+## Build & run
+
+### Android app
+```bash
+# from repo root (Android SDK required; set sdk.dir in local.properties)
+gradlew assembleDebug
+# install app/build/outputs/apk/debug/app-debug.apk and grant Bluetooth + Location
+```
+
+### Desktop app (Windows)
+```bash
+cd admin
+npm install
+npm run build:helper     # builds the C# WinRT Bluetooth helper (.NET SDK required)
+npm run build            # builds main + renderer
+npm start                # launches the Electron app
+# package a shareable installer:
+npm run dist             # → admin/release/NINE Desktop Setup <version>.exe
+```
+
+### Protocol core (tests / simulation)
+```bash
+npm install
+npm test                 # vitest unit tests
+npx tsx core/simulator/metrics-runner.ts   # simulated mesh QoS metrics
+```
+
+---
+
+## Repository layout
+
+```
+Project_NINE/
+├── app/        Android application (Java)
+├── admin/      Desktop app — Electron + React + TS, with bthelper/ (C# WinRT)
+├── core/       TypeScript protocol engine (protocol, routing, security, transport, simulator)
+├── gateway/    Platform ↔ core bridge interfaces
+├── docs/       Full technical documentation (see below)
+├── assets/     Logo, icons, screenshots
+├── Relay.md    Multi-hop relay design
+└── README.md   You are here
+```
+
+> Full map: [`docs/File-Structure.md`](docs/File-Structure.md)
+
+---
+
+## Documentation
+
+| Topic | Document |
+|-------|----------|
+| System architecture | [`docs/Architecture.md`](docs/Architecture.md) |
+| Core API / SDK | [`docs/API.md`](docs/API.md) · [`docs/SDK.md`](docs/SDK.md) |
+| Protocol & RFC | [`docs/Protocol.md`](docs/Protocol.md) · [`docs/NINE-RFC-v1.0.md`](docs/NINE-RFC-v1.0.md) |
+| Packet encoding | [`docs/PacketFormat.md`](docs/PacketFormat.md) · [`docs/NINE-PacketEncoding-v1.0.md`](docs/NINE-PacketEncoding-v1.0.md) |
+| Routing & mesh | [`docs/Routing.md`](docs/Routing.md) · [`Relay.md`](Relay.md) |
+| Transport (Bluetooth) | [`docs/Transport.md`](docs/Transport.md) · [`docs/BluetoothTransport.md`](docs/BluetoothTransport.md) |
+| Security | [`docs/Security.md`](docs/Security.md) |
+| Android internals | [`docs/android.md`](docs/android.md) |
+| Benchmarks & timing | [`docs/Benchmarks.md`](docs/Benchmarks.md) · [`docs/NINE-Timing-v1.0.md`](docs/NINE-Timing-v1.0.md) |
+| Error codes / versioning | [`docs/NINE-ErrorCodes-v1.0.md`](docs/NINE-ErrorCodes-v1.0.md) · [`docs/NINE-Versioning-v1.0.md`](docs/NINE-Versioning-v1.0.md) |
+
+*(The original Android-only README is preserved at [`docs/README-legacy.md`](docs/README-legacy.md).)*
 
 ---
 
 ## Roadmap
 
-Done:
-- [x] Stable per-device app IDs (UUID) alongside display names
-- [x] Message envelope with `messageId`, `sourceId`, `destId`, `ttl`
-- [x] Duplicate detection and TTL-based loop prevention
-- [x] Multi-neighbor connection manager (many links at once)
-- [x] Controlled-flooding forwarding (multi-hop delivery)
-- [x] Presence announcements that propagate through the mesh
-- [x] "People online" contact list separate from nearby Bluetooth devices
-- [x] Targeted messaging by device ID
-- [x] End-to-end encryption (RSA + AES-GCM)
-- [x] Delivery ACKs with retries and inline status
-- [x] Relay Mode button with automatic accept/connect/forward + foreground service
-- [x] Offline map (osmdroid) with area download, GPS position, and mesh peer pins
+**Done**
+- [x] Multi-hop relay mesh (controlled flooding: TTL + seen-set + split-horizon)
+- [x] End-to-end encryption (RSA-2048 + AES-256-GCM), delivery ACKs with retries
+- [x] Presence propagation & "people online" contacts; targeted, encrypted messaging
+- [x] Relay Mode with foreground service; offline map + GPS peer sharing
+- [x] Desktop client + token-gated admin dashboard over real Windows Bluetooth
+- [x] Connectionless BLE alerts with capability-adaptive **extended advertising** + re-broadcast relay
 
-In progress / planned:
-- [ ] Move the mesh networking into `RelayService` for true background relaying (currently the app must stay running)
-- [ ] Encrypt/authenticate location shares (currently sent as mesh metadata)
+**Planned**
+- [ ] Wi-Fi Direct high-speed transport path
+- [ ] Store-and-forward under heavy churn
 - [ ] Metadata privacy (hide who is talking to whom)
-- [ ] Device-type filter for Relay Mode auto-connect
-- [ ] Production tile provider for offline map downloads
+- [ ] ESP32 + LoRa range-extension bridge, field-validated at distance
 
 ---
 
-## License
+## Team & license
 
-Open source — free to modify and use for your own projects.
+Built by **Vikas Tiwari · Om Singh** (Thakur College of Engineering and Technology).
 
-## References
+Licensed under the **MIT License** — see [`LICENSE`](LICENSE).
 
-- [Android Bluetooth Guide](https://developer.android.com/guide/topics/connectivity/bluetooth)
-- [Bluetooth Mesh Networking](https://www.bluetooth.com/learn-about-bluetooth/recent-enhancements/mesh/)
+<div align="center">
+<br/>
+<sub><b>NINE</b> — because communication shouldn't stop when the network does.</sub>
+</div>
