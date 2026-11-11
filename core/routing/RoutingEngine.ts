@@ -123,6 +123,13 @@ export class RoutingEngine {
       case PacketType.ROUTE_ERROR: this.handleRouteError(packet); break;
       case PacketType.ACK: this.handleAck(packet); break;
       case PacketType.BROADCAST: this.handleBroadcast(packet, from); break;
+      // RFC Rule 13: DISCOVERY, DISCOVERY_RESPONSE, and HEARTBEAT MUST NOT
+      // be forwarded under any circumstances. Deliver locally only.
+      case PacketType.DISCOVERY:
+      case PacketType.DISCOVERY_RESPONSE:
+      case PacketType.HEARTBEAT:
+        this.deliver(packet);
+        break;
       default: this.handleUnicast(packet, from); break;
     }
   }

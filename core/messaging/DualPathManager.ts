@@ -8,7 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { type NodeID, type PacketID, type Timestamp, PacketType } from '../shared/Types.js';
-import { type Packet } from '../protocol/Packet.js';
+import { type Packet, PacketFlags } from '../protocol/Packet.js';
 import { createPacket } from '../protocol/PacketFactory.js';
 import { serialize } from '../protocol/Serializer.js';
 import { KeyManager, type SecureMessageBundle } from '../security/KeyManager.js';
@@ -98,6 +98,7 @@ export class DualPathManager {
       sequenceNumber: Date.now() % 0xFFFFFFFF,
       ttl: 20,
       payload: dataPayload,
+      flags: PacketFlags.ENCRYPTED | PacketFlags.REQUIRES_ACK,
       timestamp: now,
     });
 
@@ -110,6 +111,7 @@ export class DualPathManager {
       sequenceNumber: (Date.now() + 1) % 0xFFFFFFFF,
       ttl: 20,
       payload: keyPayload,
+      flags: PacketFlags.ENCRYPTED | PacketFlags.REQUIRES_ACK,
       timestamp: now,
     });
 

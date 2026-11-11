@@ -68,6 +68,7 @@ In addition to the permanent Node ID, each node generates a **Session ID** at st
 | 0x08 | ROUTE_REQUEST | Request a path to a destination |
 | 0x09 | ROUTE_REPLY | Reply with a discovered path |
 | 0x0A | ROUTE_ERROR | Notify that a route has broken |
+| 0x0B | KEY_ANNOUNCE | Distribute Admin's RSA public key to the mesh |
 
 ---
 

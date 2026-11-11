@@ -116,7 +116,7 @@ describe('Scenario 1: Multi-hop routing A→B→C→D', () => {
     const [a, _b, _c, d] = nodes;
 
     // A sends a unicast packet to D
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(10) });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(10) });
     a!.engine.sendPacket(pkt, serialize(pkt));
 
     // Let RREQ flood and RREP return
@@ -139,7 +139,7 @@ describe('Scenario 2: Automatic route discovery for unknown destination', () => 
     expect(a!.engine.routeCache.getNextHop(c!.id, 0 as Timestamp)).toBeNull();
 
     // Send packet — should be queued
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: c!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: c!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
     a!.engine.sendPacket(pkt, serialize(pkt));
 
     expect(a!.engine.getMetrics().routeDiscoveries).toBe(1);
@@ -159,7 +159,7 @@ describe('Scenario 3: Relay node failure → route invalidation', () => {
     const [a, b, _c, d] = nodes;
 
     // First establish route A→B→C→D
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
     a!.engine.sendPacket(pkt, serialize(pkt));
     advanceUntilQuiet();
     expect(d!.delivered.length).toBe(1);
@@ -179,12 +179,12 @@ describe('Scenario 4: TTL expiration', () => {
     const [a, _b, _c, d] = nodes;
 
     // Send with TTL=1 — can only reach B, not D
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 1, payload: Buffer.alloc(5) });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 1, payload: Buffer.alloc(5) });
     a!.engine.sendPacket(pkt, serialize(pkt));
     advanceUntilQuiet();
 
     // D should NOT receive the data packet (but may receive RREQ which has its own TTL=20)
-    const dataPackets = d!.delivered.filter(p => p.header.packetType === PacketType.HEARTBEAT);
+    const dataPackets = d!.delivered.filter(p => p.header.packetType === PacketType.ENCRYPTED_MESSAGE);
     expect(dataPackets.length).toBe(0);
   });
 });
@@ -214,7 +214,7 @@ describe('Scenario 6: Broken link → ROUTE_ERROR', () => {
     const [a, b, c] = nodes;
 
     // Establish route
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: c!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: c!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
     a!.engine.sendPacket(pkt, serialize(pkt));
     advanceUntilQuiet();
     expect(c!.delivered.length).toBe(1);
@@ -234,7 +234,7 @@ describe('Scenario 7: Pending queue → delivery after route discovery', () => {
     const [a, _b, _c, _d, e] = nodes;
 
     // A sends to E (4 hops away, no route known)
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: e!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.from('queued') });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: e!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.from('queued') });
     a!.engine.sendPacket(pkt, serialize(pkt));
 
     // Should be in pending queue
@@ -258,7 +258,7 @@ describe('Stress: 10-node mesh', () => {
     const first = nodes[0]!;
     const last = nodes[9]!;
 
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: first.id, destinationId: last.id, sequenceNumber: 1, ttl: 20, payload: Buffer.from('deep') });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: first.id, destinationId: last.id, sequenceNumber: 1, ttl: 20, payload: Buffer.from('deep') });
     first.engine.sendPacket(pkt, serialize(pkt));
     advanceUntilQuiet();
 
@@ -273,7 +273,7 @@ describe('Stress: 20-node mesh', () => {
     const first = nodes[0]!;
     const last = nodes[19]!;
 
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: first.id, destinationId: last.id, sequenceNumber: 1, ttl: 25, payload: Buffer.from('stress') });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: first.id, destinationId: last.id, sequenceNumber: 1, ttl: 25, payload: Buffer.from('stress') });
     first.engine.sendPacket(pkt, serialize(pkt));
 
     // 20-node chain needs more ticks: RREQ floods 19 hops, RREP returns 19 hops, data travels 19 hops
@@ -304,7 +304,7 @@ describe('Metrics collection', () => {
     const { nodes, advanceUntilQuiet } = createRoutedMesh('linear', 4);
     const [a, _b, _c, d] = nodes;
 
-    const pkt = createPacket({ packetType: PacketType.HEARTBEAT, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
+    const pkt = createPacket({ packetType: PacketType.ENCRYPTED_MESSAGE, senderId: a!.id, destinationId: d!.id, sequenceNumber: 1, ttl: 20, payload: Buffer.alloc(5) });
     a!.engine.sendPacket(pkt, serialize(pkt));
     advanceUntilQuiet();
 

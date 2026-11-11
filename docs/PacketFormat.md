@@ -27,20 +27,22 @@ All packets share this header structure:
 ├──────────┼───────────┼───────────────────┼─────────────────────┤
 │  0       │  1 byte   │  version          │  uint8              │
 │  1       │  1 byte   │  packetType       │  uint8 (enum)       │
-│  2       │  16 bytes │  packetId         │  UUID (128-bit)     │
-│  18      │  16 bytes │  senderId         │  UUID (128-bit)     │
-│  34      │  16 bytes │  destinationId    │  UUID (128-bit)     │
-│  50      │  8 bytes  │  timestamp        │  uint64 (ms epoch)  │
-│  58      │  1 byte   │  ttl              │  uint8              │
-│  59      │  1 byte   │  hopCount         │  uint8              │
-│  60      │  2 bytes  │  payloadLength    │  uint16             │
-│  62      │  4 bytes  │  checksum         │  uint32 (CRC-32)    │
-│  66      │  N bytes  │  payload          │  byte[]             │
-│  66+N    │  64 bytes │  signature        │  byte[] (optional)  │
+│  2       │  1 byte   │  flags            │  uint8 (bitfield)   │
+│  3       │  16 bytes │  packetId         │  UUID (128-bit)     │
+│  19      │  16 bytes │  senderId         │  UUID (128-bit)     │
+│  35      │  16 bytes │  destinationId    │  UUID (128-bit)     │
+│  51      │  4 bytes  │  sequenceNumber   │  uint32             │
+│  55      │  8 bytes  │  timestamp        │  uint64 (ms epoch)  │
+│  63      │  1 byte   │  ttl              │  uint8              │
+│  64      │  1 byte   │  hopCount         │  uint8              │
+│  65      │  2 bytes  │  payloadLength    │  uint16             │
+│  67      │  4 bytes  │  checksum         │  uint32 (CRC-32)    │
+│  71      │  N bytes  │  payload          │  byte[]             │
+│  71+N    │  64 bytes │  signature        │  byte[] (optional)  │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-**Total header size**: 66 bytes (fixed) + variable payload + optional 64-byte signature.
+**Total header size**: 71 bytes (fixed) + variable payload + optional 64-byte signature.
 
 ---
 
@@ -312,8 +314,8 @@ For debugging and simulation purposes, packets can be serialized as JSON:
 ## 6. Maximum Packet Size
 
 - Maximum total packet size: **4096 bytes** (4 KB)
-- Header: 66 bytes
-- Maximum payload: 4030 bytes (without signature) or 3966 bytes (with signature)
+- Header: 71 bytes
+- Maximum payload: 4025 bytes (without signature) or 3961 bytes (with signature)
 
 This limit exists because:
 - Bluetooth RFCOMM MTU is typically limited
@@ -338,7 +340,7 @@ Strings are encoded as UTF-8 with explicit length prefixes (no null termination)
 
 ```
 1. Construct the full packet (header + payload)
-2. Set the checksum field (bytes 62-65) to 0x00000000
+2. Set the checksum field (bytes 67-70) to 0x00000000
 3. Compute CRC-32 over the entire byte sequence
 4. Write the CRC-32 value into the checksum field
 ```
@@ -346,7 +348,7 @@ Strings are encoded as UTF-8 with explicit length prefixes (no null termination)
 On reception:
 ```
 1. Read the checksum field and store it
-2. Set the checksum field to 0x00000000
+2. Set the checksum field (bytes 67-70) to 0x00000000
 3. Compute CRC-32 over the modified byte sequence
 4. Compare computed value to stored value
 5. If mismatch → drop packet

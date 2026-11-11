@@ -390,7 +390,7 @@ JSON serialization is NOT used on the wire. It is a debugging aid only.
 |---------------|---------|
 | Total packet | 4096 bytes |
 | Header | 71 bytes (fixed) |
-| Payload | 3961 bytes (unsigned) or 3897 bytes (signed) |
+| Payload | 4025 bytes (unsigned) or 3961 bytes (signed) |
 | Signature | 64 bytes |
 | Display name | 64 bytes (UTF-8) |
 | Broadcast message | 3950 bytes (UTF-8) |
